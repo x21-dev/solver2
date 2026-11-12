@@ -20,7 +20,8 @@ where the work stands. solver2 started as solver's code at commit
 far it adds the first of the two: `DynamicProblem`, a problem as a class
 that gets what a compile-time problem gets, and `solver2.dynamic`, the
 stage and the archive over it as plain functions (`runStage`,
-`runArchive`). The C interface and the Python module are next.
+`runArchive`); and the C interface, a shared library with a header in
+[`bindings/c`](bindings/c/README.md). The Python module is next.
 
 solver itself stays as it is, and the projects that use it need not
 change. The manual will say how to move a project to solver2.

@@ -15,17 +15,18 @@ Written 2026-11-12.
 | 1. Spike: Python calls D | done on Windows 2026-11-12: it works; Linux owed |
 | 2. The class, completed | done 2026-11-12 |
 | 3. Entry points and run-time `minScore` | done 2026-11-12 |
-| 4. The C interface | next |
-| 5. The Python module | |
+| 4. The C interface | done on Windows 2026-11-12; Linux owed |
+| 5. The Python module | next |
 | 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
 | 7. The manual | |
 
 solver2 is solver's code with the package and modules renamed, plus the
 completed `DynamicProblem` (step 2), the archive's `minScore` as a value
-known at run time, and the searches over the class as plain functions in
-`solver2.dynamic` (step 3). The searches otherwise are unchanged: the
-worked example still prints what solver's does, and its final archive has
-the same bits.
+known at run time, the searches over the class as plain functions in
+`solver2.dynamic` (step 3), and their C interface as a shared library in
+`bindings/c` (step 4). The searches otherwise are unchanged: the worked
+example still prints what solver's does, and its final archive has the
+same bits.
 
 ## What solver2 is
 
@@ -161,7 +162,7 @@ first of the five faults above.
 
 ### The C interface
 
-A dub package of its own in this repository (working name `bindings/c`,
+A dub package of its own in this repository (`bindings/c`,
 `targetType: dynamicLibrary`) that depends on the core by path. The core
 stays a source library.
 
@@ -188,8 +189,9 @@ What D needs inside another process:
   and a `term`;
 - every thread that calls in known to the D runtime: the one that called
   `init` is, and any other must attach first (`thread_attachThis`). The
-  spike (step 1) showed this working, and that the exported functions
-  can do it themselves;
+  exported functions do it themselves: once per thread, on its first
+  call, with a hook that detaches the thread when it ends. Not per call:
+  step 4 found that unsafe (see there);
 - the model's worker threads never call back: for a foreign problem,
   features and predictions use the D-side defaults;
 - the archive on the heap (`N = 0`), as the class route has it anyway. A
@@ -347,8 +349,10 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
   (working name `unchecked`), and the manual says how to build either. A
   project without the flag in its `dub.json` is switched by `DFLAGS` or
   the build type.
-- **Every exported function attaches the calling thread when the runtime
-  doesn't know it, and detaches it before returning**, so a caller on any
+- **(Superseded in step 4: attaching per call is unsafe; a thread is
+  attached once and detached when it ends.)** Every exported function
+  attaches the calling thread when the runtime doesn't know it, and
+  detaches it before returning, so a caller on any
   thread is safe and no thread ends while still attached. The rule "one
   thread only" is then not needed; "one call at a time per object" still
   is.
@@ -510,15 +514,165 @@ For step 4:
 - An archive saved as bytes must include `Archive.minScore`; the
   checkpoint template does it by walking the fields.
 
-### 4. The C interface
+### 4. The C interface (done on Windows 2026-11-12)
 
-The `bindings/c` package, with a C header written by hand and a test in D
-that drives the library through the exported functions only. Built with
-the runtime linked statically and bounds checks on, and with a second
-configuration without the checks (step 1, "What it changes in the
-design"). Done when a
-stage, an archive, a learned model, and a save, load and resume all run
-through it, and a resumed run equals the uninterrupted one bit for bit.
+`bindings/c`: a stage, an archive, a learned model, and a save, load and
+resume all run through the exported functions, and a resumed run equals
+the uninterrupted one to the last byte of its saved state. Its Linux run
+waits for a Linux machine (step 6).
+
+**What is there** (`bindings/c/README.md` has the commands and the file
+list):
+
+- `include/solver2.h`, by hand: 37 functions, 14 structs with fields, 4
+  handle types. Its opening comment is the contract.
+- The library, `solver2.dll` / `libsolver2.so`, in two configurations:
+  `library` (the D runtime linked in, bounds checks on) and `unchecked`
+  (the same without the checks). Both write the same file;
+  `solver2_checked()` tells them apart.
+- `ForeignProblem` (`foreign.d`): the problem as data, one callback per
+  batch with flat arrays, each breach summed by `breachOf` on the D side.
+  Its description is checked when it is made (`checkDescription`, the
+  half of `checkProblem` that evaluates nothing, split out in the core
+  for this), and its fingerprint is the caller's pairs plus the
+  description itself, so a run saved on other genes, limits, axes,
+  ranking or `min_score` is refused with what differs.
+- A stage, an archive and a model between calls (`runs.d`), over
+  `runStage` and `runArchive`. One report per generation or iteration,
+  whose return value goes on, stops (to resume) or reports a failure.
+- Saving (`checkpoint.d`): the binding copies the manual's checkpoint
+  template, as open question 2 recommends, and the core gets no
+  serialiser. A saved run holds its model's state, and how the model was
+  made, so that it is restored into one made the same way.
+- Handles are a slot and a count, never an address: a handle freed, of
+  another kind, or never one is an error.
+
+**Decisions made here**
+
+- **A failed evaluation leaves a run whole.** When the caller's
+  evaluation fails (any Python exception, a Ctrl-C), the run and its
+  model are put back as after their last whole generation or iteration,
+  and the same call made again ends as the run that never failed, bit
+  for bit. A stage already keeps its state after every generation; an
+  archive is copied after every iteration (its emitters deep, its cells
+  shallow), and a model saved as bytes, because the searches train the
+  model and sample from the emitters before they evaluate. The cost is
+  below the training's own, and nothing when a run has no model but for
+  the archive's copy. The alternative, a run that is broken after a
+  failure, would have lost a notebook user's run to one Ctrl-C.
+- **The options' structs have no ranking**: it is the problem's, as
+  step 3 made it.
+- **The default functions** (`solver2_*_default`) fill the structs from
+  the D defaults, so a wrapper never repeats a number.
+- **`checkpoint.d` is a copy, not the example's file used in place**: the
+  bytes are the binding's format from here on, with its own magic
+  strings and version, and a change of the manual's template doesn't
+  change it unseen.
+
+**The thread rule changed: found by the driver.** The plan had every
+exported function attach an unknown thread and detach it before
+returning. That is not safe with druntime 2.112 (LDC 1.42), in two ways:
+
+- `thread_detachThis` takes the thread off the runtime's list but leaves
+  it as the runtime's "this thread". The thread's next call finds itself
+  known, doesn't attach, and runs where the collector doesn't see its
+  stack. With a model's threads allocating, the collector then frees
+  memory the thread is using: of 8 runs of the driver, its second
+  thread got other bits in 5, and in one more the process died without a
+  word.
+- With that cleared (`thread_setThis(null)`), the second attach makes a
+  new `Thread` object, while the thread's block cache
+  (`core.internal.gc.blkcache`) stays recorded on the first, which is
+  gone. The collector no longer clears the cache of blocks it frees, and
+  the heap was corrupted in every run (25 of 25, exit code 0xC0000374).
+
+So a thread is attached **once, on its first call, and stays attached**,
+which is what the spike had shown working, and is detached when it ends
+by a hook the operating system calls on the thread (fiber-local storage
+on Windows, a pthread key elsewhere). Checked on Windows: the hook runs
+(a one-off build printed the runtime's thread count going from 2 to 1 as
+the thread ended), and the driver passed 31 of 31 runs with two foreign
+threads at once and twelve one after another. What it means for a
+caller:
+
+- a thread that has called the library is stopped for a moment, like
+  any D thread, whenever the D collector runs, for as long as it lives;
+- `solver2_init`'s first call is to come from a thread that outlives the
+  library's use: it becomes the D runtime's main thread;
+- a process ended from a foreign thread while another holds the
+  runtime's thread lock could hang in the hook. Not seen; Python ends
+  from its main thread.
+
+The spike's attach test passed because it attached each thread once, by
+hand. Its conclusion that the exported functions "can do it themselves"
+was right only for that.
+
+**The tests**
+
+- `dub test` in `bindings/c` (13 modules): the interface in one process
+  with the searches. A stage, an archive and both with a model give the
+  bits of `runStage` and `runArchive` on the same problem as a D class:
+  every report, the best, every cell and threshold, the counts, the
+  diverse picks. A run stopped by its report, saved, freed, loaded and
+  resumed has the saved bytes of the uninterrupted one, with a model
+  too, and on any number of the model's threads. The evaluation made to
+  fail at five different batches, the seeds' and the first iteration's
+  among them, and the report made to fail: the call says so, the run is
+  where the header says, and gone on with it has the uninterrupted run's
+  bytes. Each thing a load refuses. With the archive's roll-back
+  disabled, or the model's in a stage or in an archive, these tests fail
+  (checked by hand, one at a time).
+- **The header is held to the library** (`conformance.d`): `solver2.h`
+  is read by ImportC and compared with the D declarations, each struct's
+  fields, offsets and size, each function's parameters, each constant,
+  in both directions. A wrong field, constant or parameter planted on
+  either side failed the build with its name.
+- **The driver** (`bindings/c/test`): a program built with `-betterC`,
+  so with no D runtime, that loads the library at run time and knows
+  only the header. It is the Python situation without Python, and it is
+  what found the thread fault. It ran against both configurations.
+
+Checked on Windows with LDC 1.42.0: the core's tests (10 modules), the
+example's (11) and its run, whose output is still solver's; the
+binding's tests (13); the driver against `library` and `unchecked`.
+
+And from Python itself, with a throwaway `ctypes` script (not kept;
+step 5 writes the module): a stage with its evaluation in Python gave
+the same bits on the main thread, after a Python exception in batch 9
+(the call returned `SOLVER2_CALLBACK` at generation 8 and the stage went
+on), and from 22 Python threads, four at a time and one after another.
+Six runs of it, Python 3.15.0.
+
+**Not done, or not exposed**
+
+- Linux: nothing here has run there. Written from the documentation and
+  untested: the pthread half of the exit hook, `dlopen` in the driver,
+  `libs-posix` in the driver's `dub.json`, and whether `-fvisibility=hidden`
+  with the runtime linked in gives a `.so` that loads beside nothing
+  else.
+- A bug's `Error` caught at the boundary (an index out of range with the
+  checks on) has no test: the spike showed it, and nothing in the
+  interface can be made to raise one on purpose.
+- Not in the interface: the archive's `evaluated` callback and its
+  per-emitter reports, focused runs, a grid other than `BinnedGrid`, a
+  subclass's own learning spec, `Best` carried from one stage to the
+  next (a stage has its own; start the next from the last one's best
+  genes).
+- `solver2_term` and then `solver2_init` again in one process: druntime
+  doesn't promise it, and the header says not to.
+
+**For step 5**
+
+- The wrapper's job is small: build the spec from a Python object, keep
+  the callback object alive as long as the problem, keep the exception
+  an `evaluate` raised and raise it again when the call returns
+  `SOLVER2_CALLBACK` (the run can then be continued).
+- `ctypes` structs must match the header. A test that compares their
+  sizes and offsets with numbers from the library would need those
+  exported; simpler, check `solver2_abi()` and keep the Python structs
+  next to a note of the header's version.
+- A Python `evaluate` gets flat arrays: numpy views with
+  `np.ctypeslib.as_array`, nothing copied (the spike).
 
 ### 5. The Python module
 
@@ -536,8 +690,12 @@ Dev's Windows machine only (see "Linux before the remote" below).
 `ubuntu-latest` and `windows-latest` with LDC 1.42.0, the core's tests,
 the example's tests and the example. To add:
 
-- **The shared library**: build `bindings/c` and run its D test, which
-  drives it through the exported functions only.
+- **The shared library**: in `bindings/c`, `dub test --compiler=ldc2`,
+  then `dub build --compiler=ldc2 --build=release`, then in
+  `bindings/c/test` `dub run --compiler=ldc2`, which drives the library
+  through the exported functions only (it needs the library built
+  first, and a C compiler for ImportC's preprocessor, which both runners
+  have).
 - **Python**: `actions/setup-python`, then numpy and the test runner with
   pip, then the Python tests against the library just built.
 - **The same bits through Python**: the Python worked example's result
@@ -633,6 +791,10 @@ Keep this list as the work goes, for the manual's migration section.
   - an `Archive` built as a struct literal with every field in order
     would need the new one. With `N` 0 it has a constructor, so only an
     `N > 0` archive could be written so; none is known.
+- **`checkProblem` refuses a gene whose neutral value is outside its
+  range** (step 4). It used to pass: the start genes are clamped, so the
+  check on them could never fail. `checkDescription` is the half of
+  `checkProblem` that evaluates nothing.
 - **A problem's member named `minScore` is now read by the archive**
   (step 3), as where its thresholds start, and `Archiving`'s `minScore`
   argument must then stay 0. None of pleaser, pleaser-bus-chain and
@@ -648,7 +810,9 @@ Keep this list as the work goes, for the manual's migration section.
    format is the manual's template, copied by each project. Python can't
    walk D structs, so the binding has to export a run as bytes.
    Recommended: the binding copies the template, as any project does, and
-   the core still gets no serialiser.
+   the core still gets no serialiser. Step 4 did so
+   (`bindings/c/source/solver2c/checkpoint.d`); say if the core should
+   have one after all.
 3. **Python packaging.** A plain folder whose module loads the library by
    path (recommended for now), or a wheel.
 4. **solver from here on.** Whether a bug found in code both hold
@@ -683,8 +847,10 @@ Keep this list as the work goes, for the manual's migration section.
 
 - LDC only, 1.42.0. Checks before every commit: `dub test --compiler=ldc2`
   in the core, and in `docs/example` both `dub test --compiler=ldc2` and
-  `dub run --compiler=ldc2 --build=release`; from step 4 the binding's
-  tests, from step 5 the Python tests.
+  `dub run --compiler=ldc2 --build=release`; in `bindings/c`
+  `dub test --compiler=ldc2`, `dub build --compiler=ldc2 --build=release`
+  and then in `bindings/c/test` `dub run --compiler=ldc2`; from step 5
+  the Python tests.
 - Determinism and D style: `CLAUDE.md`, as in solver. In
   short: seeded noise only through `SplitMix64`; no `@fastmath` or
   `-fp-contract=fast`; fixed-order sums; goldens per platform; a test

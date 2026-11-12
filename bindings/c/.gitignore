@@ -1,0 +1,12 @@
+.dub/
+dub.selections.json
+/solver2.dll
+/solver2.lib
+/solver2.exp
+/libsolver2.so
+/solver2-c-test*
+/test/solver2-c-driver
+/test/solver2-c-driver.exe
+*.pdb
+*.obj
+*.o

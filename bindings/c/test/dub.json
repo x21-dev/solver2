@@ -1,0 +1,16 @@
+{
+    "name": "solver2-c-driver",
+    "description": "Drives solver2's C interface as a caller in another language does: the shared library loaded at run time, by a program with no D runtime",
+    "authors": [
+        "x21-dev"
+    ],
+    "license": "proprietary",
+    "targetType": "executable",
+    "buildOptions": [
+        "betterC"
+    ],
+    "libs-posix": [
+        "dl",
+        "pthread"
+    ]
+}

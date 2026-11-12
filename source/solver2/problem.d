@@ -701,8 +701,9 @@ static assert(isProblem!DynamicProblem && hasDescriptors!DynamicProblem && hasSu
 /// Its description: genes with finite ranges (above 0 for a log scale),
 /// limits with weights that aren't negative, axes that fit `BinnedGrid`
 /// (ascending edges, a letter per bin) and count as many as its
-/// descriptors, a finite ranking and `minScore`, start genes in [0, 1], and
-/// predictions with as many descriptors as it has.
+/// descriptors, a finite ranking and `minScore`, neutral values within
+/// their ranges, and predictions with as many descriptors as it has
+/// (`checkDescription` is this half alone).
 ///
 /// Its evaluation, on its start genes, both corners of gene space and
 /// `rows` rows drawn with `seed`, a quarter of a range outside [0, 1]: a
@@ -715,48 +716,15 @@ void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
 {
     import std.conv : text;
     import std.exception : enforce;
-    import std.math : isFinite;
     import solver2.rng : SplitMix64;
 
     immutable string name = typeid(p).name;
     void need(bool ok, lazy string what) { enforce(ok, name ~ ": " ~ what); }
 
-    // The description.
-    const specs = p.genes;
-    immutable size_t n = specs.length, nd = p.descriptorCount;
-    need(n > 0, "no genes");
-    foreach (ref g; specs)
-    {
-        need(isFinite(g.lo) && isFinite(g.hi) && g.lo <= g.hi,
-             text("gene ", g.name, ": its range must be finite, lo to hi"));
-        need(g.scale != Scale.log || g.lo > 0, text("gene ", g.name, ": a log scale needs lo above 0"));
-    }
-    foreach (ref c; p.constraints)
-        need(c.weight >= 0 && isFinite(c.weight),
-             text("limit ", c.name, ": its weight must be finite and not negative"));
-    const axes = p.axes;
-    need(axes.length == 0 || axes.length == nd, text(axes.length, " axes for ", nd, " descriptors"));
-    foreach (ref a; axes)
-    {
-        need(a.letters.length == a.bins,
-             text("axis ", a.name, ": ", a.letters.length, " letters for ", a.bins, " bins"));
-        need(a.nanBin < a.bins, text("axis ", a.name, ": its NaN bin is not one of its bins"));
-        need(a.width > 0 && isFinite(a.width), text("axis ", a.name, ": its width must be finite and above 0"));
-        foreach (i, e; a.edges)
-            need(!isNaN(e) && (i == 0 || a.edges[i - 1] < e), text("axis ", a.name, ": its edges must ascend"));
-    }
-    const r = p.ranking;
-    need(isFinite(r.hardOffset) && isFinite(r.terminalOffset) && isFinite(r.boundPenalty)
-         && r.hardOffset >= r.terminalOffset && r.boundPenalty >= 0,
-         "its ranking must be finite, the hard offset not below the terminal one, the bound penalty not negative");
+    checkDescription(p);
+    immutable size_t n = p.dimension, nd = p.descriptorCount;
     immutable double lowest = p.minScore;
-    need(isFinite(lowest), "its minScore must be finite");
     const start = p.startGenes;
-    foreach (i, v; start)
-        need(v >= 0 && v <= 1, text("gene ", specs[i].name, ": its neutral value is outside its range"));
-    need(p.featureCount > 0 && p.targetCount > 0, "a learning spec needs features and targets");
-    need(p.predicted(new double[p.targetCount]).descriptors.length == nd,
-         text("predicted gives another number of descriptors than the problem's ", nd));
 
     // The evaluation.
     auto rng = SplitMix64(seed);
@@ -814,6 +782,54 @@ void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
                                   ", below the problem's minScore ", lowest));
         }
     }
+}
+
+/// The first half of `checkProblem`: a problem's description alone, with no
+/// evaluation. For a problem built from data (a binding), when it is made.
+void checkDescription(DynamicProblem p)
+{
+    import std.conv : text;
+    import std.exception : enforce;
+    import std.math : isFinite;
+
+    immutable string name = typeid(p).name;
+    void need(bool ok, lazy string what) { enforce(ok, name ~ ": " ~ what); }
+
+    const specs = p.genes;
+    immutable size_t n = specs.length, nd = p.descriptorCount;
+    need(n > 0, "no genes");
+    foreach (ref g; specs)
+    {
+        need(isFinite(g.lo) && isFinite(g.hi) && g.lo <= g.hi,
+             text("gene ", g.name, ": its range must be finite, lo to hi"));
+        need(g.scale != Scale.log || g.lo > 0, text("gene ", g.name, ": a log scale needs lo above 0"));
+        // (startGenes clamps, so the start itself can't show it.)
+        need(isNaN(g.neutral) || (g.neutral >= g.lo && g.neutral <= g.hi),
+             text("gene ", g.name, ": its neutral value is outside its range"));
+    }
+    foreach (ref c; p.constraints)
+        need(c.weight >= 0 && isFinite(c.weight),
+             text("limit ", c.name, ": its weight must be finite and not negative"));
+    const axes = p.axes;
+    need(axes.length == 0 || axes.length == nd, text(axes.length, " axes for ", nd, " descriptors"));
+    foreach (ref a; axes)
+    {
+        need(a.letters.length == a.bins,
+             text("axis ", a.name, ": ", a.letters.length, " letters for ", a.bins, " bins"));
+        need(a.nanBin < a.bins, text("axis ", a.name, ": its NaN bin is not one of its bins"));
+        need(a.width > 0 && isFinite(a.width), text("axis ", a.name, ": its width must be finite and above 0"));
+        foreach (i, e; a.edges)
+            need(!isNaN(e) && (i == 0 || a.edges[i - 1] < e), text("axis ", a.name, ": its edges must ascend"));
+    }
+    const r = p.ranking;
+    need(isFinite(r.hardOffset) && isFinite(r.terminalOffset) && isFinite(r.boundPenalty)
+         && r.hardOffset >= r.terminalOffset && r.boundPenalty >= 0,
+         "its ranking must be finite, the hard offset not below the terminal one, the bound penalty not negative");
+    immutable double lowest = p.minScore;
+    need(isFinite(lowest), "its minScore must be finite");
+    need(p.featureCount > 0 && p.targetCount > 0, "a learning spec needs features and targets");
+    need(p.predicted(new double[p.targetCount]).descriptors.length == nd,
+         text("predicted gives another number of descriptors than the problem's ", nd));
 }
 
 /// The first entry of `saved` that `now` lacks or holds differently, as a

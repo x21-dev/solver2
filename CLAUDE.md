@@ -25,8 +25,20 @@ developer manual, which is still solver's until the plan's step 7.
 - Before every commit: `dub test --compiler=ldc2` in solver2, and in
   `docs/example` both `dub test --compiler=ldc2` and
   `dub run --compiler=ldc2 --build=release` (the example checks a resumed
-  run against the uninterrupted one bit for bit). The work plan adds the
-  binding's and the Python tests as those steps land.
+  run against the uninterrupted one bit for bit). Then the C interface:
+  in `bindings/c`, `dub test --compiler=ldc2` and
+  `dub build --compiler=ldc2 --build=release`, and in `bindings/c/test`
+  `dub run --compiler=ldc2` (the driver loads the library just built and
+  must end with `all passed`). The work plan adds the Python tests when
+  that step lands.
+- The C interface's header (`bindings/c/include/solver2.h`) and its D
+  mirror (`source/solver2c/c.d`, `api.d`) change together: the binding's
+  tests read the header with ImportC and fail to build when they differ.
+  A change of a struct or a function there is a change of `SOLVER2_ABI`.
+- In the binding, a thread unknown to the D runtime is attached once, on
+  its first call, and detached by a hook when it ends. Don't attach and
+  detach per call: with this druntime that corrupts memory (the work
+  plan's step 4 says how).
 - The compile-time route must keep solver's bits: the worked example
   prints the same output as solver's at `ae68dbb` on one platform (but
   for a change the plan lists under "Changes a migrating project will

@@ -1,0 +1,47 @@
+{
+    "name": "solver2-c",
+    "description": "solver2's C interface: the searches over a problem whose evaluation is the caller's function, as a shared library",
+    "authors": [
+        "x21-dev"
+    ],
+    "license": "proprietary",
+    "dependencies": {
+        "solver2": {
+            "path": "../.."
+        }
+    },
+    "targetName": "solver2",
+    "configurations": [
+        {
+            "name": "library",
+            "targetType": "dynamicLibrary",
+            "versions": [
+                "Solver2Checked"
+            ],
+            "dflags": [
+                "-fvisibility=hidden",
+                "-dllimport=none",
+                "-link-defaultlib-shared=false",
+                "-boundscheck=on"
+            ]
+        },
+        {
+            "name": "unchecked",
+            "targetType": "dynamicLibrary",
+            "dflags": [
+                "-fvisibility=hidden",
+                "-dllimport=none",
+                "-link-defaultlib-shared=false"
+            ]
+        },
+        {
+            "name": "unittest",
+            "targetType": "library",
+            "targetName": "solver2-c-test",
+            "importPaths": [
+                "source",
+                "test/source"
+            ]
+        }
+    ]
+}

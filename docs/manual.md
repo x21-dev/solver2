@@ -5,7 +5,9 @@
 > (`import solver2.problem;`), but for what solver2 has changed so far:
 > [Dynamic problems](#dynamic-problems), the archive's `minScore` as a
 > value known at run time (under [Running](#running)), and
-> [Bounds checks](#bounds-checks).
+> [Bounds checks](#bounds-checks). The C interface isn't in this manual
+> yet: [`bindings/c/README.md`](../bindings/c/README.md) and its header
+> describe it.
 > Where it says solver, read solver2. Step 7
 > of the [work plan](work-plan.md) brings it to solver2's state and adds
 > the sections on Python and on migrating from solver.
@@ -496,8 +498,9 @@ class is checked when it runs:
   the problem has. It throws an `Exception` naming the class, the
   candidate and what it lacks.
 - `checkProblem(p, rows = 8, seed = 1)` checks a problem once, when you
-  meet it. Its description: finite gene ranges, axes that fit
-  `BinnedGrid`, a finite ranking and `minScore`, start genes in range.
+  meet it. Its description (`checkDescription(p)` checks that half
+  alone, with no evaluation): finite gene ranges, neutral values within
+  them, axes that fit `BinnedGrid`, a finite ranking and `minScore`.
   And its evaluation, on the start genes, both corners and `rows` random
   rows (some outside [0, 1]): the same bits when evaluated twice, in a
   batch in another order, and alone, and `Scoring.feasibleOnly` changing
@@ -1719,10 +1722,13 @@ out, and `-enable-asserts` keeps it, passed the same way. solver2's
 asserts check what its callers hand it (matching array lengths, a grid's
 cell count).
 
-**The Python binding** (not built yet) will be built with bounds checks
-on: there a bug in D would otherwise corrupt the Python process instead
-of raising an error. How to build it without them is described with the
-binding.
+**The C interface** (`bindings/c`, which the Python module loads) is
+built with bounds checks on: there a bug in D would otherwise corrupt
+the caller's process instead of coming back as an error. It sets the
+flag in its own `dub.json`, so it has a second configuration without it:
+`dub build --compiler=ldc2 --build=release --config=unchecked`.
+`solver2_checked()` tells which build a library is. See
+[`bindings/c/README.md`](../bindings/c/README.md).
 
 ---
 
@@ -1762,7 +1768,7 @@ one says what it costs you and how to work around it today.
 
 | Module | What it holds |
 |---|---|
-| `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `CauseCounts`, `DynamicProblem`, `checkProblem`, `fingerprintMismatch` |
+| `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `CauseCounts`, `DynamicProblem`, `checkProblem`, `checkDescription`, `fingerprintMismatch` |
 | `solver2.dynamic` | `runStage`, `runArchive`, and the searches' types over `DynamicProblem`: `DynamicBest`, `DynamicStageGeneration`, `DynamicArchiving`, `DynamicRun`, `DynamicArchiveGeneration`, `DynamicBatch`, `DynamicModel` |
 | `solver2.stage` | `StageModel`, `StageOptions`, `Best`, `hasCauses`, `StageGeneration`, `StageEnd`, `StageRun`, `cmaStage`, `pickRendered`, `stalled` |
 | `solver2.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `hasMinScore`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
