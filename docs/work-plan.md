@@ -14,15 +14,18 @@ Written 2026-11-12.
 | 0. Set up | done 2026-11-12 |
 | 1. Spike: Python calls D | done on Windows 2026-11-12: it works; Linux owed |
 | 2. The class, completed | done 2026-11-12 |
-| 3. Entry points and run-time `minScore` | next |
-| 4. The C interface | |
+| 3. Entry points and run-time `minScore` | done 2026-11-12 |
+| 4. The C interface | next |
 | 5. The Python module | |
 | 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
 | 7. The manual | |
 
 solver2 is solver's code with the package and modules renamed, plus the
-completed `DynamicProblem` (step 2). The searches themselves are
-unchanged: the worked example still prints what solver's does.
+completed `DynamicProblem` (step 2), the archive's `minScore` as a value
+known at run time, and the searches over the class as plain functions in
+`solver2.dynamic` (step 3). The searches otherwise are unchanged: the
+worked example still prints what solver's does, and its final archive has
+the same bits.
 
 ## What solver2 is
 
@@ -138,15 +141,23 @@ microsecond-scale problem.
 
 ### Entry points without template arguments
 
-A module (working name `dynamic`) with the stage and the archive over the
-class and `BinnedGrid`, taking the grid, ranking and `minScore` from the
-object. These are plain functions, so they can be exported from a
-compiled library.
+The module `solver2.dynamic` has the stage and the archive over the class
+and `BinnedGrid` (`runStage`, `runArchive`), taking the grid, ranking,
+start genes and `minScore` from the object. These are plain functions, so
+they can be exported from a compiled library.
 
-`minScore` becomes a run-time field of `Archive`, initialised from the
+`minScore` is a run-time field of `Archive`, initialised from the
 template argument, so compile-time users see no change. `el.value -
 minScore` gives the same bits read from a field as from a constant (no
-`@fastmath`); the equivalence test below must show it.
+`@fastmath`); step 3's tests and its equivalence check show it.
+
+How the run-time value reaches the archive (decided in step 3): a
+problem's own `minScore` member is one more optional member the archive
+looks for on the static type, as it does `screenPenalty` or
+`noFeasibleSeed`. `DynamicProblem` declares it, default 0. The other way,
+a parameter of `runArchive`, would have left a subclass's `minScore`
+silently unread by anyone who calls the template directly, which is the
+first of the five faults above.
 
 ### The C interface
 
@@ -402,12 +413,102 @@ Found on the way, for step 7's manual and its Gaps and caveats:
 - `checkProblem` can only catch a problem that isn't deterministic on the
   rows it tries.
 
-### 3. Entry points and run-time `minScore`
+### 3. Entry points and run-time `minScore` (done 2026-11-12)
 
-The `dynamic` module and the `Archive` field. Done when the class runs
-with no template argument at the call site, and the equivalence test
-passes: the worked example's compile-time problem gives the same bytes as
-in solver.
+The class runs with no template argument at the call site, and the
+worked example's compile-time problem gives the same bytes as in solver.
+`stage.d`, `model.d` and the searches' loops are untouched; `archive.d`
+changed only where an archive is made and where a resumed run is checked.
+
+**`minScore` at run time**
+
+- `Archive` has a field `minScore`, last in the struct, which starts as
+  the template's third argument (renamed `defaultMinScore`; the name
+  isn't visible to a caller). `qdScore` reads the field. With `N` 0 the
+  constructor takes it: `Archive!E(cells, minScore)`.
+- `hasMinScore!P`: the problem has a member `minScore`. `runArchive` then
+  starts the thresholds there (with `N > 0` too, by filling them) and
+  refuses one that isn't finite. A resumed run on such a problem must
+  have an archive whose `minScore` equals the problem's.
+- `Archiving!(P, ..., minScore)` with a non-zero argument on a problem
+  that has the member fails to compile: one source only.
+- `DynamicProblem.minScore()`, default 0. `checkProblem` wants it finite
+  and, for a problem with descriptors, no checked row within the limits
+  with a value below it.
+
+**The entry points** (`source/solver2/dynamic.d`)
+
+- `runStage(p, best, x0, o, model, generationDone, run, afterGeneration)`
+  and `runArchive(p, seeds, o, progress, resume, afterIteration,
+  evaluated, model)`: `cmaStage` and `Archiving.runArchive` with the same
+  parameters in the same order, less the grid.
+- From the object: the start genes when `x0` or `seeds` is empty, the
+  `BinnedGrid` over its axes, the ranking and `minScore`. **The options'
+  `ranking` is replaced by the problem's**, so a caller (the C interface)
+  never has to carry one; a run records it, and resumes through the same
+  entry point.
+- They check their arguments and throw with the class's name: no
+  problem, a start or seed of another length or with a gene not finite,
+  no axes or not one per descriptor, a resumed archive of another cell
+  count.
+- Aliases for the types, so nothing is instantiated by the caller:
+  `DynamicBest`, `DynamicStageGeneration`, `DynamicArchiving`,
+  `DynamicRun`, `DynamicArchiveGeneration`, `DynamicBatch`,
+  `DynamicModel`.
+- Saving is the templates': `StageRun`, `runState`, `restoreRun`, the
+  archive and the causes. Nothing was added for it (open question 2).
+
+**The tests**
+
+- `archive.d`: `minScore` as the template's argument, as a constructor's
+  argument and by value give the same thresholds and QD score bits; a
+  struct problem with the member runs as the same problem with the
+  template's argument, with `N` 0 and `N` 16; a resumed run with another
+  `minScore` is refused, and so is one not finite.
+- `dynamic.d`: `runStage` and `runArchive` give the bits of the templates
+  called with the object's start, grid and ranking, whatever ranking the
+  options name; an archive from a subclass's `minScore` 5 has the bits of
+  the compile-time problem with 5.0 as the template's argument, QD score
+  included; a stage and an archive stopped and resumed through the entry
+  points equal the uninterrupted ones; the learned model through them;
+  and each thing they refuse. `checkProblem` names two more unsound
+  problems (seven now).
+
+**The equivalence check**, on Windows with LDC 1.42.0: the example's 12
+lines are byte-identical to those of solver's example at `ae68dbb`. And
+stronger than the printed lines, which round: copies of both examples
+(outside both checkouts) changed to print the final archive as
+hexadecimal floats gave identical output: all 16 thresholds, every
+elite's value, genes and `found`, and the QD score of the resumed and of
+the uninterrupted run.
+
+Checked on Windows: `dub test` (10 modules), the example's tests
+(11 modules) and its run. Not rerun: the spike (it uses `cmaStage` only,
+and `stage.d` didn't change). Not run on Linux.
+
+Found on the way:
+
+- **The worked example's values go below its `minScore`.** `Beam`'s
+  values run from about −48 (width 2, rate 100) to 10, and its archive's
+  thresholds start at 0: the final archive holds elites at −3.06 and
+  −0.40, in cells whose thresholds never moved. The manual says to keep
+  `minScore` at or below the lowest value. It is solver's example and
+  its bytes are the equivalence check, so it is left as it is; see open
+  question 8.
+- **dub leaves the example's `app.d` out of its test build** ("Excluding
+  main source file"), so a `unittest` there never runs. The example's
+  tests are `checkpoint.d`'s and the core's.
+- `StageEnd.rise` is NaN unless the stage stalled, so two `StageEnd`
+  never compare equal with `==`: compare their fields.
+
+For step 4:
+
+- The binding's `ForeignProblem` overrides `axes`, `ranking` and
+  `minScore` from the caller's data, and the exported functions call
+  `runStage` and `runArchive`. Their checks already turn a wrong length
+  into an exception with a message, before any index is used.
+- An archive saved as bytes must include `Archive.minScore`; the
+  checkpoint template does it by walking the fields.
 
 ### 4. The C interface
 
@@ -519,7 +620,24 @@ Keep this list as the work goes, for the manual's migration section.
   `startGenes`, `newCauses` and `countCauses`: a subclass with a member of
   one of those names must `override` it (the last four are final). Its
   outcomes are now checked: one within the limits needs `scored`, an
-  objective and its descriptors.
+  objective and its descriptors. Step 3 adds `minScore` to those names.
+- **`Archive` has one more field, `minScore`** (step 3), after `alpha`.
+  The bits of a run are the same. What a project may meet:
+  - a checkpoint written by the manual's template gains the field. One
+    written with solver lacks it and still reads: the field keeps the
+    template argument's value, which is where that archive's thresholds
+    started. (The template's own test covers a field added since; no
+    solver file was read in solver2 to show it.)
+  - a save format of the project's own (pleaser's `elites.state`) is
+    untouched: an archive it builds has the template argument's value.
+  - an `Archive` built as a struct literal with every field in order
+    would need the new one. With `N` 0 it has a constructor, so only an
+    `N > 0` archive could be written so; none is known.
+- **A problem's member named `minScore` is now read by the archive**
+  (step 3), as where its thresholds start, and `Archiving`'s `minScore`
+  argument must then stay 0. None of pleaser, pleaser-bus-chain and
+  pleaser-console-tilt has such a member (they pass `MIN_SCORE` as the
+  argument, which goes on working).
 
 ## Open questions for Dev
 
@@ -546,6 +664,20 @@ Keep this list as the work goes, for the manual's migration section.
    Python binding only, and the manual says how to turn them on or off in
    any case, for the binding and for a D project. The core, as a source
    library, takes whatever flags its user builds with.
+8. **The worked example's `minScore`** (found in step 3). `Beam`'s values
+   go down to about −48 and its thresholds start at 0, against the
+   manual's own rule. Step 5 wants a Python `Beam` whose result equals
+   the D example's bit for bit: as a `DynamicProblem` with `minScore` 0
+   it runs the same, but `checkProblem` refuses it (a candidate within
+   the limits below `minScore`). Either:
+   - keep the example's bytes (they are the equivalence check with
+     solver) until step 7, and have the Python example say why it
+     doesn't call `checkProblem`, or call it on another problem
+     (recommended: the check with solver stays one comparison of two
+     outputs for as long as the searches are being changed); or
+   - give the example a `minScore` of −50 now. Its output then differs
+     from solver's from the archive on, the check narrows to the stage's
+     lines, and the change joins the list above.
 
 ## How to work
 

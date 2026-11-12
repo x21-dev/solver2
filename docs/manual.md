@@ -2,8 +2,10 @@
 
 > **In solver2 this is still solver's manual**, as of solver commit
 > `ae68dbb`, with the package and module names changed to `solver2`
-> (`import solver2.problem;`), but for two sections written for solver2:
-> [Dynamic problems](#dynamic-problems) and [Bounds checks](#bounds-checks).
+> (`import solver2.problem;`), but for what solver2 has changed so far:
+> [Dynamic problems](#dynamic-problems), the archive's `minScore` as a
+> value known at run time (under [Running](#running)), and
+> [Bounds checks](#bounds-checks).
 > Where it says solver, read solver2. Step 7
 > of the [work plan](work-plan.md) brings it to solver2's state and adds
 > the sections on Python and on migrating from solver.
@@ -201,8 +203,9 @@ reads: the objective less the soft tier's costs (see
   CMA-ES would chase the bounds instead. Set it so a gene 0.1 outside costs
   about one useful step of your objective: 100 times that step.
 - **The archive's `minScore`** (a template argument of `Archiving`, 0 by
-  default) is where every cell's threshold starts: keep it at or below
-  *v*<sub>min</sub>.
+  default, or the problem's own `minScore` member) is where every cell's
+  threshold starts: keep it at or below *v*<sub>min</sub>. See
+  [Running](#running).
 
 Example: an objective from 0 to 5000 in the archive, a terminal breach of
 at most 100, explorer distances below 10, and a useful step of about 20:
@@ -271,6 +274,7 @@ template. This table lists only the members that the code reads.
 | `size_t descriptorCount() const`, `void descriptors(const ref Eval, double[] d) const` | Archive (required there: `hasDescriptors!P`) | Where an evaluation lands. The grid maps these values to a cell. Read only for feasible candidates. |
 | `alias Causes`, `Causes newCauses() const`, `void countCauses(ref Causes, const ref Eval) const` | Stage and archive (`hasCauses!P`, in `solver2.stage`) | Counts why candidates broke their limits, for progress reports. `Causes` needs `opOpAssign!"+"`. |
 | `double screenPenalty(const(double)[] genes)` | Pre-screening in the stage and the archive | A known cost subtracted from a predicted objective (pleaser's processing cost, which needs no render). |
+| `double minScore() const` | Archive (`hasMinScore!P`) | Where every cell's threshold starts, for a problem that knows it only when it runs. Without it, `Archiving`'s template argument. See [Running](#running). |
 | `string noFeasibleSeed() const` | Archive | A hint appended to `NoFeasibleSeed`'s message. |
 | `void adoptCauses(ref Causes)` | Archive, on resume | Lets the problem fix up resumed cause counts. |
 
@@ -325,14 +329,14 @@ fingerprint and a `noFeasibleSeed` hint. Start from a copy of it.
 
 `DynamicProblem` is an abstract class: a problem that need not be known
 at compile time, such as one chosen or loaded at run time, a binding to
-another language, or a quick test. Instantiate a search over
-`DynamicProblem` itself (`cmaStage` with a variable of that type,
-`Archiving!(DynamicProblem, BinnedGrid)`, `LearnedModel!DynamicProblem`)
-and it runs every subclass. Each call is virtual, and there is one
-`evaluateInto` per batch, so the dispatch costs nothing next to an
-evaluation. A subclass gets everything a compile-time problem gets, and
-the same bits: solver2's tests hold a subclass, used only through the
-base class, to the bits of the same problem written as a struct.
+another language, or a quick test. A search instantiated over
+`DynamicProblem` itself runs every subclass, and `solver2.dynamic` has
+them instantiated, as plain functions: `runStage` and `runArchive` (see
+[The entry points](#the-entry-points) below). Each call is virtual, and
+there is one `evaluateInto` per batch, so the dispatch costs nothing next
+to an evaluation. A subclass gets everything a compile-time problem gets,
+and the same bits: solver2's tests hold a subclass, used only through
+the base class, to the bits of the same problem written as a struct.
 
 Its `Eval` is `Outcome`: `scored`, `objective`, `violations` (one per
 limit, 0 within), `breach`, `descriptors` and `targets`.
@@ -375,7 +379,8 @@ does:
 |---|---|---|
 | `const(Axis)[] axes() const` | none | The archive's axes, one per descriptor. `grid()` is the `BinnedGrid` over them. |
 | `size_t descriptorCount() const` | `axes.length` | Override it for a grid of another kind. |
-| `Ranking ranking() const` | `Ranking.init` | Offsets that fit the problem's values, for the caller's options (see [Setting the offsets](#setting-the-offsets)). |
+| `Ranking ranking() const` | `Ranking.init` | Offsets that fit the problem's values (see [Setting the offsets](#setting-the-offsets)). The entry points rank by it. |
+| `double minScore() const` | 0 | The value's lower bound: where the archive's thresholds start, and the zero of its QD score. Finite, and at or below the lowest value of a candidate within the limits. |
 | `double screenPenalty(const(double)[] genes)` | 0 | A known cost subtracted from a predicted objective. |
 | `string noFeasibleSeed() const` | null | The hint in `NoFeasibleSeed`'s message. |
 | `void adoptCauses(ref CauseCounts) const` | sizes them | A resumed archive's cause counts, when they weren't restored. |
@@ -386,24 +391,88 @@ Remember `override`: a member with one of these names and another
 signature doesn't replace the default.
 
 **What a caller needs comes from the object**, so the caller can run a
-problem it knows nothing else about:
+problem it knows nothing else about, with no template argument at the
+call site:
 
 ```d
+import solver2.dynamic;
+
 DynamicProblem p = load(...);                   // any subclass
 checkProblem(p);                                // see below
 
-Best!Outcome best;
-StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42, ranking: p.ranking};
-cmaStage(p, best, p.startGenes, so, null);
+DynamicBest best;
+StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42};
+runStage(p, best, null, so);                    // from p.startGenes, ranked by p.ranking
 
-alias A = Archiving!(DynamicProblem, BinnedGrid);
-const grid = p.grid;
-ArchiveOptions ao = {evals: 4000, seed: 9, ranking: p.ranking};
-auto run = A.runArchive(p, grid, [best.genes], ao);
+ArchiveOptions ao = {evals: 4000, seed: 9};
+auto run = runArchive(p, [best.genes], ao);     // p's grid, ranking and minScore
 ```
 
 `startGenes()` is each gene's `neutral` value, or the middle of its range
 where it has none.
+
+#### The entry points
+
+`solver2.dynamic` has the two searches over the class as plain functions.
+They are `cmaStage` and `Archiving.runArchive` with the same parameters in
+the same order, less the grid, and they give the same bits as the
+templates called with what the object says of itself:
+
+```d
+StageEnd runStage(DynamicProblem p, ref DynamicBest best, const(double)[] x0, StageOptions o,
+                  StageModel!Outcome model = null,
+                  scope void delegate(const ref DynamicStageGeneration) generationDone = null,
+                  StageRun* run = null,
+                  scope bool delegate(const ref StageRun) afterGeneration = null);
+
+DynamicRun runArchive(DynamicProblem p, const(double[])[] seeds, ArchiveOptions o,
+                      scope void delegate(const ref DynamicArchiveGeneration) progress = null,
+                      DynamicRun* resume = null,
+                      scope bool delegate(const ref DynamicRun) afterIteration = null,
+                      scope void delegate(const ref DynamicBatch) evaluated = null,
+                      ArchiveSurrogate!Outcome model = null);
+```
+
+What they take from the object:
+
+| | `runStage` | `runArchive` |
+|---|---|---|
+| Where to start | `p.startGenes`, when `x0` is empty | `[p.startGenes]`, when `seeds` is empty and the run isn't resumed |
+| The ranking | `p.ranking` | `p.ranking` |
+| The grid | | `BinnedGrid` over `p.axes` |
+| Where the thresholds start | | `p.minScore` |
+
+- **`o.ranking` is replaced by `p.ranking`**, whatever it held: a problem
+  met at run time knows its own values. To rank it otherwise, override
+  its `ranking`, or call the templates. A run records the ranking it
+  used in its options, so it resumes through the same entry point.
+- **They check what they are given** and throw an `Exception` naming the
+  class and what is wrong: a start or a seed with another number of genes
+  than the problem, or a gene that isn't finite (outside [0, 1] is fine);
+  for the archive, a problem without axes or with another number of them
+  than descriptors, and a resumed archive with another number of cells
+  than the grid.
+- **The types** are aliases, so nothing is instantiated at the call site:
+  `DynamicBest` (`Best!Outcome`), `DynamicStageGeneration`,
+  `DynamicArchiving` (`Archiving!(DynamicProblem, BinnedGrid)`),
+  `DynamicRun`, `DynamicArchiveGeneration`, `DynamicBatch`, and
+  `DynamicModel` (`LearnedModel!DynamicProblem`):
+
+  ```d
+  auto model = new DynamicModel(p, 3, pool);    // on the problem's learning spec
+  StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42, surrogatePool: 4};
+  runStage(p, best, null, so, model);
+  ```
+
+- **Stopping, saving and resuming** are the templates': a `StageRun` for a
+  stage; for an archive `runState`, `restoreRun`, the run's archive and
+  its causes (see
+  [Stopping, saving and resuming](#stopping-saving-and-resuming)). A
+  resumed archive must still have its `minScore`, which is a field of the
+  archive, and the problem must still give the same one.
+- A problem whose cells aren't a `BinnedGrid` uses the template with its
+  own grid: `Archiving!(DynamicProblem, MyGrid)`. The archive still reads
+  its `minScore` from the object.
 
 **Cause counts** come for free: `Causes` is `CauseCounts`, whose `over[i]`
 counts the candidates over limit `i` of `constraints`, from each
@@ -428,14 +497,16 @@ class is checked when it runs:
   candidate and what it lacks.
 - `checkProblem(p, rows = 8, seed = 1)` checks a problem once, when you
   meet it. Its description: finite gene ranges, axes that fit
-  `BinnedGrid`, a finite ranking, start genes in range. And its
-  evaluation, on the start genes, both corners and `rows` random rows
-  (some outside [0, 1]): the same bits when evaluated twice, in a batch
-  in another order, and alone, and `Scoring.feasibleOnly` changing no
-  breach and no objective it computes. It costs about 5 × (`rows` + 3)
-  evaluations and throws an `Exception` saying what is wrong. It can't
-  prove a problem deterministic, only catch one that isn't on these
-  rows.
+  `BinnedGrid`, a finite ranking and `minScore`, start genes in range.
+  And its evaluation, on the start genes, both corners and `rows` random
+  rows (some outside [0, 1]): the same bits when evaluated twice, in a
+  batch in another order, and alone, and `Scoring.feasibleOnly` changing
+  no breach and no objective it computes. For a problem with
+  descriptors, no row within the limits may have a value below
+  `minScore`. It costs about 5 × (`rows` + 3) evaluations and throws an
+  `Exception` saying what is wrong. It can't prove a problem
+  deterministic, or its `minScore` low enough, only catch one that isn't
+  on these rows.
 
 ---
 
@@ -681,6 +752,25 @@ A run goes like this:
   [Performance](#performance) before you use it.
 - `minScore` is where every cell's threshold starts, and the zero of
   `qdScore`. Set it at or below the lowest feasible value.
+
+**`minScore` known only at run time.** The archive keeps it as a field,
+`run.archive.minScore`, which starts as the template's argument. A
+problem that learns its lower bound when it runs gives it as a member
+instead, and leaves the template's argument at 0 (the build fails
+otherwise):
+
+```d
+double minScore() const { return lowest; }      // in the problem; must be finite
+```
+
+`runArchive` then starts every threshold there, with `N > 0` too.
+`DynamicProblem` has the member, 0 unless a subclass overrides it. The
+two routes give the same bits: a threshold or a QD score computed from
+the field is the one computed from the constant. The field is part of
+the archive, so it is saved and restored with the thresholds; a resumed
+run on a problem with the member checks that the two still agree. An
+archive of your own takes it in its constructor:
+`Archive!E(cells, minScore)`.
 
 ### Options
 
@@ -1064,15 +1154,18 @@ runs.
 |---|---|---|
 | A fingerprint of what the run was computed from | your problem | check with `fingerprintMismatch` |
 | The run's state between iterations | `runState(run)` → `RunState!O` | `restoreRun(run, state)` |
-| The archive: elites, **thresholds and alpha** | `run.archive` | assign `run.archive` |
+| The archive: elites, **thresholds, alpha and minScore** | `run.archive` | assign `run.archive` |
 | The cause counts | `run.causes` | assign `run.causes` |
 | The model, if any | `model.save(run.evals)` → `ubyte[]` | `model.restore(bytes, run.evals)` |
 
 `RunState!O` holds every field of the run except the archive, the causes
 and the seeds' evaluations. Each emitter's CMA-ES is a `CmaEs.State`, and
 its RNG is a `ulong`. `restoreRun` doesn't touch `run.archive`, so restore
-the archive yourself, thresholds and `alpha` included. A resumed run
-doesn't reset `alpha` from the options. `LearnedModel.save` is versioned
+the archive yourself, thresholds, `alpha` and `minScore` included. A
+resumed run doesn't reset `alpha` from the options. A file written
+before `Archive` had its `minScore` field (by solver) lacks it; read with
+the template below, the field keeps the template argument's value, which
+is where that archive's thresholds started. `LearnedModel.save` is versioned
 and holds the training data and the ensemble. `restore` refuses bytes
 from another run size or shape, and leaves the model as it was when it
 does.
@@ -1670,9 +1763,9 @@ one says what it costs you and how to work around it today.
 | Module | What it holds |
 |---|---|
 | `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `CauseCounts`, `DynamicProblem`, `checkProblem`, `fingerprintMismatch` |
-| `solver2.dynamic` | Nothing to import yet: the tests that hold a `DynamicProblem` subclass to a compile-time problem's bits |
+| `solver2.dynamic` | `runStage`, `runArchive`, and the searches' types over `DynamicProblem`: `DynamicBest`, `DynamicStageGeneration`, `DynamicArchiving`, `DynamicRun`, `DynamicArchiveGeneration`, `DynamicBatch`, `DynamicModel` |
 | `solver2.stage` | `StageModel`, `StageOptions`, `Best`, `hasCauses`, `StageGeneration`, `StageEnd`, `StageRun`, `cmaStage`, `pickRendered`, `stalled` |
-| `solver2.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
+| `solver2.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `hasMinScore`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
 | `solver2.model` | `isLearning`, `LearnedModel`, `ColumnStats`, `columnStats` |
 | `solver2.cmaes` | `CmaEs` (with `State`), `jacobiEigen` |
 | `solver2.ensemble` | `EnsembleOptions`, `Ensemble`, `Stats`, `targetStats` |

@@ -1,21 +1,142 @@
-/// Problems as classes, through the searches: that a `DynamicProblem`
-/// (problem.d) used only through the base class gets what a compile-time
-/// problem gets from the stage, the archive and the learned model, and the
-/// same bits.
+/// The searches over a problem met at run time: a CMA-ES stage and the
+/// archive over `DynamicProblem` (problem.d), as plain functions with no
+/// template argument at the call site.
 ///
-/// So far this module holds those checks. The entry points that need no
-/// template argument at the call site come here next.
+/// `runStage` and `runArchive` are `cmaStage` (stage.d) and
+/// `Archiving.runArchive` (archive.d) over the class and `BinnedGrid`, and
+/// take from the object what a caller of the templates writes out: the
+/// grid from its axes, the ranking, the archive's `minScore`, and the
+/// start genes when none are given. They are instantiated once, here, and
+/// serve every subclass; being functions, they can be exported from a
+/// compiled library (the C interface does).
+///
+/// A subclass used only through the base class gets from them what a
+/// compile-time problem gets from the templates, and the same bits: the
+/// tests below hold one to the same problem written as a struct.
 module solver2.dynamic;
 
-import solver2.model : isLearning;
+import std.conv : text;
+import std.exception : enforce;
+
+import solver2.archive : ArchiveOptions, ArchiveSurrogate, Archiving, hasMinScore;
+import solver2.model : isLearning, LearnedModel;
 import solver2.problem;
-import solver2.stage : hasCauses;
+import solver2.stage : Best, cmaStage, hasCauses, StageEnd, StageGeneration, StageModel, StageOptions, StageRun;
 
 // The optional members the searches look for on the static type are all
 // there on the base class.
-static assert(hasCauses!DynamicProblem && isLearning!DynamicProblem);
+static assert(hasCauses!DynamicProblem && isLearning!DynamicProblem && hasMinScore!DynamicProblem);
 static assert(__traits(hasMember, DynamicProblem, "screenPenalty") && __traits(hasMember, DynamicProblem, "noFeasibleSeed")
               && __traits(hasMember, DynamicProblem, "adoptCauses"));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The searches' types over the class
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The best candidate so far, across stages (`Best`).
+alias DynamicBest = Best!Outcome;
+
+/// One generation of a stage, for `runStage`'s report.
+alias DynamicStageGeneration = StageGeneration!DynamicProblem;
+
+/// The archive's search over the class and `BinnedGrid`. `runArchive` below
+/// calls its `runArchive` with the object's grid and ranking.
+alias DynamicArchiving = Archiving!(DynamicProblem, BinnedGrid);
+
+/// A run of the archive: its result, and between iterations what continues
+/// it (`ArchiveRun`). Saved with `runState` and restored with `restoreRun`,
+/// its archive and causes beside them, as any run.
+alias DynamicRun = DynamicArchiving.Run;
+
+/// One emitter generation, for `runArchive`'s progress report.
+alias DynamicArchiveGeneration = DynamicArchiving.Generation;
+
+/// One batch of evaluations, for `runArchive`'s `evaluated`.
+alias DynamicBatch = DynamicArchiving.Batch;
+
+/// The learned model of a `DynamicProblem`, on its learning spec:
+/// `new DynamicModel(p, seed, pool)`. It pre-screens a stage and guides the
+/// archive's emitters.
+alias DynamicModel = LearnedModel!DynamicProblem;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The entry points
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A CMA-ES stage over `p`: `cmaStage` (stage.d), which see for `best`,
+/// `model`, `generationDone`, `run` and `afterGeneration`. From the object:
+///
+/// - the start, when `x0` is empty: `p.startGenes`;
+/// - the ranking: `o.ranking` is replaced by `p.ranking` (to rank a
+///   problem otherwise, override its `ranking`).
+///
+/// Throws when `x0` has another length than the problem has genes, or a
+/// gene that isn't finite.
+StageEnd runStage(DynamicProblem p, ref DynamicBest best, const(double)[] x0, StageOptions o,
+                  StageModel!Outcome model = null,
+                  scope void delegate(const ref DynamicStageGeneration) generationDone = null,
+                  StageRun* run = null, scope bool delegate(const ref StageRun) afterGeneration = null)
+{
+    enforce(p !is null, "a stage needs a problem");
+    const start = x0.length ? x0 : p.startGenes;
+    checkGenes(p, start, "the stage's start");
+    o.ranking = p.ranking;
+    return cmaStage(p, best, start, o, model, generationDone, run, afterGeneration);
+}
+
+/// The archive over `p`: `Archiving.runArchive` (archive.d), which see for
+/// `progress`, `resume`, `afterIteration`, `evaluated` and `model`. From the
+/// object:
+///
+/// - the grid: a `BinnedGrid` over `p.axes`, one per descriptor;
+/// - the seeds, when none are given and the run isn't resumed:
+///   `p.startGenes`;
+/// - the ranking: `o.ranking` is replaced by `p.ranking`;
+/// - where the thresholds start: `p.minScore`.
+///
+/// Throws when the problem has no axes, or not one per descriptor; when a
+/// seed has another length than the problem has genes, or a gene that isn't
+/// finite; and when a resumed run's archive has another number of cells
+/// than the grid.
+DynamicRun runArchive(DynamicProblem p, const(double[])[] seeds, ArchiveOptions o,
+                      scope void delegate(const ref DynamicArchiveGeneration) progress = null,
+                      DynamicRun* resume = null,
+                      scope bool delegate(const ref DynamicRun) afterIteration = null,
+                      scope void delegate(const ref DynamicBatch) evaluated = null,
+                      ArchiveSurrogate!Outcome model = null)
+{
+    enforce(p !is null, "an archive needs a problem");
+    const axes = p.axes;
+    immutable size_t nd = p.descriptorCount;
+    enforce(axes.length > 0 && axes.length == nd,
+            text(typeid(p).name, ": the archive needs the problem's axes, one per descriptor (it has ", axes.length,
+                 " axes and ", nd, " descriptors)"));
+    const grid = BinnedGrid(axes);
+    if (resume is null)
+    {
+        if (seeds.length == 0)
+            seeds = [p.startGenes];
+        foreach (i, s; seeds)
+            checkGenes(p, s, text("seed ", i, " of the archive"));
+    }
+    else
+        enforce(resume.archive.elites.length == grid.cells && resume.archive.threshold.length == grid.cells,
+                text(typeid(p).name, ": an archive of ", resume.archive.elites.length,
+                     " cells resumed on a grid of ", grid.cells));
+    o.ranking = p.ranking;
+    return DynamicArchiving.runArchive(p, grid, seeds, o, progress, resume, afterIteration, evaluated, model);
+}
+
+/// Throws unless `x` is a gene vector of `p`: one finite value per gene.
+/// Values outside [0, 1] are fine: the searches clamp them.
+private void checkGenes(const DynamicProblem p, const(double)[] x, lazy string what)
+{
+    import std.math : isFinite;
+    immutable size_t n = p.dimension;
+    enforce(x.length == n, text(typeid(p).name, ": ", what, " has ", x.length, " genes, the problem ", n));
+    foreach (i, v; x)
+        enforce(isFinite(v), text(typeid(p).name, ": ", what, " has gene ", i, " not finite"));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
@@ -165,7 +286,7 @@ version (unittest)
         return t;
     }
 
-    private bool sameArchive(A)(const ref A a, const ref A b)
+    private bool sameArchive(A, B)(const ref A a, const ref B b)
     {
         if (!sameBits(a.threshold[], b.threshold[]) || a.elites.length != b.elites.length)
             return false;
@@ -190,7 +311,22 @@ version (unittest)
         return o;
     }
 
-    private alias DynamicArchiving = Archiving!(DynamicProblem, BinnedGrid);
+    /// The problem with a ranking and a lowest value of its own.
+    private final class Ranked : Field
+    {
+        override Ranking ranking() const { return Ranking(1000, 500, 20); }
+        override double minScore() const { return 5; }
+    }
+
+    /// A stage's every generation flat, for the entry point's report.
+    private void delegate(const ref DynamicStageGeneration) tracing(ref double[] t)
+    {
+        return (const ref DynamicStageGeneration g) {
+            t ~= [cast(double) g.generation, g.best, g.populationBest, g.sigma, cast(double) g.infeasible];
+            foreach (row; g.genes)
+                t ~= row;
+        };
+    }
 }
 
 unittest
@@ -199,7 +335,7 @@ unittest
     // and its ranking.
     DynamicProblem p = new Field;
     assert(p.dimension == 3 && p.descriptorCount == 2 && p.startGenes == [0.5, 0.3, 0.5]);
-    assert(p.grid.cells == 16 && p.ranking == Ranking.init);
+    assert(p.grid.cells == 16 && p.ranking == Ranking.init && p.minScore == 0);
     assert(p.screenPenalty([0.5, 0.5, 0.5]) == 0 && p.noFeasibleSeed is null);
     assert(p.featureCount == 3 && p.targetCount == 5);
 
@@ -266,6 +402,19 @@ unittest
         override const(Axis)[] axes() const { return [Axis("x", [0.5, 1, 1.5], "abc", 0, 0.5), fieldAxes[1]]; }
     }
     assert(collectExceptionMsg(checkProblem(new Lettered)).indexOf("3 letters for 4 bins") > 0);
+
+    // A lowest value the problem's candidates go below: the archive's
+    // thresholds would start above them.
+    static class Sunk : Field
+    {
+        override double minScore() const { return 9.5; }
+    }
+    assert(collectExceptionMsg(checkProblem(new Sunk)).indexOf("below the problem's minScore 9.5") > 0);
+    static class Bottomless : Field
+    {
+        override double minScore() const { return -double.infinity; }
+    }
+    assert(collectExceptionMsg(checkProblem(new Bottomless)).indexOf("minScore must be finite") > 0);
 
     // What evaluate checks of every batch, with or without checkProblem.
     static class Short : Field
@@ -437,17 +586,166 @@ unittest
 {
     // The manual's "What a caller needs comes from the object": a problem
     // the caller knows only as a DynamicProblem, checked, then through a
-    // stage and the archive on what the object says of itself.
+    // stage and the archive with no template argument at the call site.
     DynamicProblem p = new Costly;
     checkProblem(p);
 
-    Best!Outcome best;
-    StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42, ranking: p.ranking};
-    cmaStage(p, best, p.startGenes, so, null);
+    DynamicBest best;
+    StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42};
+    runStage(p, best, null, so);
 
-    alias A = Archiving!(DynamicProblem, BinnedGrid);
-    const grid = p.grid;
-    ArchiveOptions ao = {evals: 400, seed: 9, ranking: p.ranking};
-    auto run = A.runArchive(p, grid, [best.genes], ao);
+    ArchiveOptions ao = {evals: 400, seed: 9};
+    auto run = runArchive(p, [best.genes], ao);
     assert(best.feasible && run.archive.bestScore >= valueOf(p, best.eval) && run.archive.coverage >= 6);
+}
+
+unittest
+{
+    // runStage is cmaStage with what the object says of itself: its start
+    // genes and its ranking, whatever the options hold. Stopped and resumed
+    // through it, the stage ends as the one that never stopped.
+    StageOptions so = {lambda: 8, sigma: 0.2, budget: 400, seed: 3, stallGenerations: 0};
+    DynamicProblem p = new Ranked, q = new Ranked;
+    DynamicBest bp, bq, br;
+    double[] tp, tq, tr;
+    StageRun kept;
+    const ep = runStage(p, bp, null, so, null, tracing(tp), &kept);
+    auto sq = so;
+    sq.ranking = q.ranking;
+    const eq = cmaStage(q, bq, q.startGenes, sq, null, tracing(tq));
+    assert(ep.generations == eq.generations && ep.spent == eq.spent && !ep.stalled);
+    assert(sameBits(tp, tq) && sameBits(bp.genes, bq.genes) && bp.evals == 400);
+    assert(kept.options.ranking == Ranking(1000, 500, 20) && so.ranking == Ranking.init);
+
+    // A start of the caller's own, and options that name another ranking:
+    // the problem's is still the one used.
+    auto odd = so;
+    odd.ranking = Ranking(-1000, -1000);
+    DynamicBest bo, bw;
+    double[] to, tw;
+    runStage(p, bo, [0.2, 0.2, 0.6], odd, null, tracing(to));
+    cmaStage(q, bw, [0.2, 0.2, 0.6], sq, null, tracing(tw));
+    assert(sameBits(to, tw) && !sameBits(to, tp));
+
+    StageRun sr;
+    DynamicProblem r = new Ranked;
+    const stopped = runStage(r, br, null, so, null, tracing(tr), &sr, (const ref StageRun s) => s.generation == 20);
+    assert(stopped.stopped && stopped.generations == 20 && sr.options.ranking == r.ranking);
+    const resumed = runStage(r, br, null, so, null, tracing(tr), &sr);
+    assert(!resumed.stopped && resumed.generations == ep.generations && sameBits(tr, tp) && sameBits(br.genes, bp.genes));
+}
+
+unittest
+{
+    // runArchive is Archiving.runArchive with the object's grid, ranking,
+    // seeds and minScore.
+    DynamicProblem p = new Ranked, q = new Ranked;
+    const opts = fieldOptions();
+    auto rp = runArchive(p, null, opts);
+    auto oq = fieldOptions();
+    oq.ranking = q.ranking;
+    const grid = q.grid;
+    auto rq = DynamicArchiving.runArchive(q, grid, [q.startGenes], oq);
+    assert(sameArchive(rp.archive, rq.archive) && rp.evals == rq.evals && rp.reached == rq.reached);
+    assert(rp.options.ranking == Ranking(1000, 500, 20) && rp.causes.over == rq.causes.over);
+
+    // Its thresholds start at the problem's minScore, read from the object
+    // as a compile-time problem's is read from the template's argument: the
+    // same bits, the QD score's included. The cell beyond the limit on the
+    // sum is never reached, and keeps the threshold it started with.
+    FieldS s;
+    auto rs = Archiving!(FieldS, BinnedGrid, ArchiveOptions, 0, 5.0).runArchive(s, grid, [q.startGenes], oq);
+    assert(rp.archive.minScore == 5 && sameArchive(rp.archive, rs.archive) && rp.evals == rs.evals);
+    assert(rp.archive.qdScore is rs.archive.qdScore && rp.archive.coverage >= 6);
+    assert(!rp.archive.elites[grid.parse("dd")].occupied && rp.archive.threshold[grid.parse("dd")] == 5);
+    foreach (t; rp.archive.threshold)
+        assert(t >= 5);
+    // From 0 the thresholds are others: Field's start there.
+    DynamicProblem f = new Field;
+    auto rf = runArchive(f, null, opts);
+    assert(rf.archive.minScore == 0 && rf.archive.threshold[grid.parse("dd")] == 0);
+
+    // Stopped, saved as plain data and resumed through it: the run that
+    // never stopped. Its minScore comes back with the archive.
+    auto stopped = runArchive(p, null, opts, null, null, (const ref DynamicRun r) => r.iterations == 6);
+    assert(stopped.stopped && stopped.iterations == 6);
+    const saved = runState(stopped);
+    DynamicRun back;
+    restoreRun(back, saved);
+    back.archive = stopped.archive;
+    back.archive.elites = stopped.archive.elites.dup;
+    back.archive.threshold = stopped.archive.threshold.dup;
+    back.causes = CauseCounts(stopped.causes.over.dup);
+    auto resumed = runArchive(p, null, opts, null, &back);
+    assert(sameArchive(resumed.archive, rp.archive) && resumed.evals == rp.evals && resumed.archive.minScore == 5);
+    assert(resumed.causes.over == rp.causes.over && resumed.reached == rp.reached);
+
+    // An archive that lost its minScore, or met a problem with another, is
+    // refused; so is one of another grid.
+    DynamicRun lost;
+    restoreRun(lost, saved);
+    lost.archive = stopped.archive;
+    lost.archive.minScore = 0;
+    assert(collectExceptionMsg(runArchive(p, null, opts, null, &lost)).indexOf("its own minScore") > 0);
+    DynamicRun moved;
+    restoreRun(moved, saved);
+    moved.archive = stopped.archive;
+    assert(collectExceptionMsg(runArchive(f, null, opts, null, &moved)).length > 0);
+    DynamicRun small;
+    restoreRun(small, saved);
+    small.archive = typeof(small.archive)(9, 5);
+    assert(collectExceptionMsg(runArchive(p, null, opts, null, &small)).indexOf("9 cells resumed on a grid of 16") > 0);
+}
+
+unittest
+{
+    // The learned model through the entry points: a pre-screened stage and
+    // model-guided emitters, as the templates run them.
+    StageOptions so = {lambda: 8, sigma: 0.2, budget: 160, seed: 5, stallGenerations: 0,
+                       surrogatePool: 4, surrogateShare: 0.5, surrogateFrom: 3, surrogateEpochs: 2};
+    DynamicProblem p = new Costly, q = new Costly;
+    auto mp = new DynamicModel(p, 7, null, EnsembleOptions(2, 16)),
+         mq = new LearnedModel!DynamicProblem(q, 7, null, EnsembleOptions(2, 16));
+    DynamicBest bp, bq;
+    double[] tp, tq;
+    runStage(p, bp, null, so, mp, tracing(tp));
+    cmaStage(q, bq, q.startGenes, so, mq, tracing(tq));
+    assert(mp.rows == 160 && sameBits(tp, tq) && bp.feasible && (cast(Field) p).penalties == 18 * 32);
+
+    auto ao = fieldOptions();
+    ao.surrogatePool = 4;
+    ao.surrogateFrom = 3;
+    ao.surrogateEpochs = 2;
+    ao.surrogateImprovers = true;
+    auto ap = new DynamicModel(p, 7, null, EnsembleOptions(2, 16)), aq = new DynamicModel(q, 7, null, EnsembleOptions(2, 16));
+    auto rp = runArchive(p, null, ao, null, null, null, null, ap);
+    const grid = q.grid;
+    auto rq = DynamicArchiving.runArchive(q, grid, [q.startGenes], ao, null, null, null, null, aq);
+    assert(sameArchive(rp.archive, rq.archive) && ap.rows == rp.evals && rp.guide.sampled > 0 && rp.screen.sampled > 0);
+}
+
+unittest
+{
+    // What the entry points refuse, each with a message that names it.
+    DynamicProblem none, p = new Field;
+    DynamicBest best;
+    StageOptions so = {lambda: 8, sigma: 0.2, budget: 80, seed: 1};
+    const ao = fieldOptions();
+    assert(collectExceptionMsg(runStage(none, best, null, so)).indexOf("needs a problem") > 0);
+    assert(collectExceptionMsg(runArchive(none, null, ao)).indexOf("needs a problem") > 0);
+    assert(collectExceptionMsg(runStage(p, best, [0.5, 0.5], so)).indexOf("has 2 genes, the problem 3") > 0);
+    assert(collectExceptionMsg(runStage(p, best, [0.5, double.nan, 0.5], so)).indexOf("gene 1 not finite") > 0);
+    assert(collectExceptionMsg(runArchive(p, [[0.5, 0.3, 0.5], [0.5]], ao)).indexOf("seed 1 of the archive has 1 genes") > 0);
+    assert(best.evals == 0 && (cast(Field) p).batches == 0);
+
+    // A problem without axes has no grid here: a stage runs, the archive
+    // says what it lacks.
+    static class Flat : Field
+    {
+        override const(Axis)[] axes() const { return null; }
+        override size_t descriptorCount() const { return 2; }
+    }
+    DynamicProblem flat = new Flat;
+    assert(runStage(flat, best, null, so).spent == 80 && best.feasible);
+    assert(collectExceptionMsg(runArchive(flat, null, ao)).indexOf("0 axes and 2 descriptors") > 0);
 }

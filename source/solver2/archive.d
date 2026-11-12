@@ -123,27 +123,34 @@ struct Offer
 /// Cells, their thresholds and their best candidates. With `N` cells fixed
 /// at compile time, held by value (`Elite!E[N]`: a copy is a copy); with
 /// `N` 0, in arrays of `cells` given to the constructor. Thresholds start
-/// at `minScore`, the value's lower bound.
-struct Archive(E, size_t N = 0, double minScore = 0)
+/// at `minScore`, the value's lower bound: a field, which starts as the
+/// template's third argument. A problem that knows its lower bound only
+/// when it runs gives it as a member (`Archiving`), or the constructor
+/// takes it.
+struct Archive(E, size_t N = 0, double defaultMinScore = 0)
 {
     static if (N)
     {
         Elite!E[N]  elites;
-        double[N]   threshold = minScore;
+        double[N]   threshold = defaultMinScore;
     }
     else
     {
         Elite!E[]   elites;
         double[]    threshold;
 
-        this(size_t cells) pure nothrow
+        this(size_t cells, double minScore = defaultMinScore) pure nothrow
         {
             elites = new Elite!E[cells];
             threshold = new double[cells];
             threshold[] = minScore;
+            this.minScore = minScore;
         }
     }
     double alpha = 0.1;
+    /// Where every threshold started, and the zero of `qdScore`. Saved and
+    /// restored with the thresholds.
+    double minScore = defaultMinScore;
 
     /// Offers a feasible candidate of value `f` in `cell`: moves the cell's
     /// threshold when it beats it, and keeps the candidate when it is the
@@ -690,15 +697,26 @@ private double screenPenaltyOf(P)(ref P p, const(double)[] x)
         return 0;
 }
 
+/// Whether `P` says itself where the archive's thresholds start: a member
+/// `minScore` that reads as a double (`double minScore() const`). For a
+/// problem that knows it only when it runs; `DynamicProblem` has one.
+enum bool hasMinScore(P) = __traits(hasMember, P, "minScore");
+
 /// The archive's search over problem `P` and grid `G`, with options `O`
 /// (ArchiveOptions or the problem's own, with the same fields), `N` cells
 /// fixed at compile time (the archive then held by value; 0: the grid's
-/// count, in arrays) and thresholds from `minScore`. A template of
-/// functions rather than function templates, so arguments convert as to
-/// any function: `Archiving!(P, G).runArchive(p, grid, seeds, options)`.
+/// count, in arrays) and thresholds from `minScore`: the template's
+/// argument, or the problem's own `minScore` member when it has one (then
+/// leave the argument at 0). A template of functions rather than function
+/// templates, so arguments convert as to any function:
+/// `Archiving!(P, G).runArchive(p, grid, seeds, options)`.
 template Archiving(P, G, O = ArchiveOptions, size_t N = 0, double minScore = 0)
     if (hasDescriptors!P && isGrid!G)
 {
+    static assert(!hasMinScore!P || minScore == 0,
+                  P.stringof ~ " has a minScore member, which the archive reads: leave Archiving's minScore"
+                  ~ " argument at 0");
+
     alias Run = ArchiveRun!(P, O, N, minScore);
     alias Generation = ArchiveGeneration!(CausesOf!P);
     alias Batch = ArchiveBatch!(P.Eval);
@@ -724,6 +742,10 @@ template Archiving(P, G, O = ArchiveOptions, size_t N = 0, double minScore = 0)
     ///
     /// The problem's optional `adoptCauses(ref Causes)` is called on a resumed
     /// run's counts, for what they carry that isn't saved.
+    ///
+    /// The thresholds start at the problem's optional `minScore` (finite),
+    /// or without one at the template's argument. A resumed run keeps its
+    /// archive's, which must still be the problem's.
     Run runArchive(ref P p, const ref G grid, const(double[])[] seeds, O opts,
                    scope void delegate(const ref Generation) progress = null, Run* resume = null,
                    scope bool delegate(const ref Run) afterIteration = null,
@@ -734,7 +756,22 @@ template Archiving(P, G, O = ArchiveOptions, size_t N = 0, double minScore = 0)
         if (resume !is null)
             return continueArchive(p, grid, opts, *resume, progress, afterIteration, evaluated, model);
         Run res;
-        static if (N == 0)
+        static if (hasMinScore!P)
+        {
+            // The problem's own lower bound, known when it runs.
+            import std.math : isFinite;
+            immutable double from = p.minScore;
+            enforce(isFinite(from), "the archive's thresholds start at the problem's minScore, which must be finite");
+            static if (N == 0)
+                res.archive = typeof(res.archive)(grid.cells, from);
+            else
+            {
+                assert(grid.cells == N);
+                res.archive.minScore = from;
+                res.archive.threshold[] = from;
+            }
+        }
+        else static if (N == 0)
             res.archive = typeof(res.archive)(grid.cells);
         else
             assert(grid.cells == N);
@@ -896,6 +933,10 @@ template Archiving(P, G, O = ArchiveOptions, size_t N = 0, double minScore = 0)
             enforce(was == opts, "an archive resumed goes on with its own options");
             enforce(res.emitters.length == opts.emitters && res.blockedUntil.length == res.archive.elites.length,
                     "an archive resumed must hold its emitters");
+            static if (hasMinScore!P)
+                enforce(res.archive.minScore == p.minScore,
+                        "an archive resumed goes on from its own minScore: restore it with the thresholds, on a"
+                        ~ " problem that still has it");
             foreach (ref e; res.emitters)
                 enforce(e.es.populationSize == res.lambda
                         || (model !is null && e.es.populationSize == opts.surrogatePool * res.lambda),
@@ -1294,6 +1335,96 @@ unittest
         a.offer(3, 2, [0.5], e, 5);
         assert(a.coverage == 2 && a.best == 1 && a.qdScore == 23 && a.bestScore == 21 && a.occupiedCells == [1, 3]);
     }}
+}
+
+unittest
+{
+    // minScore as the template's argument and as a value given when it
+    // runs: the same thresholds and the same QD score, bit for bit.
+    auto byType = Archive!(Outcome, 0, 2.5)(4);
+    auto byField = Archive!Outcome(4, 2.5);
+    Archive!(Outcome, 4, 2.5) byValue;
+    auto plain = Archive!Outcome(4);
+    assert(byType.minScore == 2.5 && byField.minScore == 2.5 && byValue.minScore == 2.5 && plain.minScore == 0);
+    assert(byField.threshold == [2.5, 2.5, 2.5, 2.5] && plain.threshold == [0.0, 0, 0, 0]);
+    Outcome e;
+    foreach (i, f; [7.3, 2.6, 0.1, 9.7, 3.3, 2.5])
+    {
+        immutable size_t cell = i % 3;
+        const a = byType.offer(cell, f, [0.5], e, i), b = byField.offer(cell, f, [0.5], e, i),
+              c = byValue.offer(cell, f, [0.5], e, i);
+        assert(a.value is b.value && a.improved == b.improved && a.newCell == b.newCell && a == c);
+        // A value at or below minScore opens its cell but improves nothing.
+        assert(a.improved == (f > 2.5));
+    }
+    assert(sameBits(byType.threshold, byField.threshold) && sameBits(byType.threshold, byValue.threshold[]));
+    assert(byType.qdScore is byField.qdScore && byType.qdScore is byValue.qdScore);
+    // The elites are 9.7, 3.3 and 2.5: 7.2 + 0.8 + 0 above minScore.
+    import std.math : isClose;
+    assert(isClose(byField.qdScore, 8.0) && byField.threshold[3] == 2.5 && byField.coverage == 3);
+}
+
+unittest
+{
+    // A problem with a minScore of its own (one known only when it runs):
+    // its archive starts there, as the same problem's with that minScore as
+    // the template's argument, by array and by value; a resumed run keeps it.
+    import std.exception : assertThrown;
+    static struct Deep
+    {
+        alias Eval = Outcome;
+        Plane plane;
+        double floor;
+
+        size_t dimension() const { return 2; }
+        Outcome[] evaluate(const(double[])[] genes, Scoring s) { return plane.evaluate(genes, s); }
+        bool scored(const ref Outcome e) const { return e.scored; }
+        double objective(const ref Outcome e) const { return e.objective; }
+        Breach breach(const ref Outcome e) const { return e.breach; }
+        size_t descriptorCount() const { return 2; }
+        void descriptors(const ref Outcome e, double[] d) const { d[] = e.descriptors[]; }
+        double minScore() const { return floor; }
+    }
+    static assert(hasMinScore!Deep && !hasMinScore!Plane);
+    static assert(!__traits(compiles, Archiving!(Deep, BinnedGrid, ArchiveOptions, 0, 4.0).Run));
+
+    const grid = planeGrid();
+    const seeds = [[0.5, 0.5]];
+    const o = planeOptions();
+    auto deep = Deep(Plane.init, 4);
+    Plane plane;
+    auto byMember = Archiving!(Deep, BinnedGrid).runArchive(deep, grid, seeds, o);
+    auto byType = Archiving!(Plane, BinnedGrid, ArchiveOptions, 0, 4.0).runArchive(plane, grid, seeds, o);
+    auto byValue = Archiving!(Deep, BinnedGrid, ArchiveOptions, 16).runArchive(deep, grid, seeds, o);
+    assert(byMember.archive.minScore == 4 && byValue.archive.minScore == 4);
+    assert(byMember.evals == byType.evals && sameBits(byMember.archive.threshold, byType.archive.threshold)
+           && sameBits(byMember.archive.threshold, byValue.archive.threshold[]));
+    assert(byMember.archive.qdScore is byType.archive.qdScore && byMember.archive.qdScore is byValue.archive.qdScore);
+    foreach (c, ref el; byMember.archive.elites)
+        assert(el.occupied == byType.archive.elites[c].occupied && el.genes == byType.archive.elites[c].genes
+               && el.value is byType.archive.elites[c].value && el.genes == byValue.archive.elites[c].genes);
+    // No candidate reaches the corner beyond the limit: its cell's threshold
+    // is still where it started, and no threshold is below it.
+    assert(!byMember.archive.elites[grid.parse("dd")].occupied && byMember.archive.threshold[grid.parse("dd")] == 4);
+    foreach (t; byMember.archive.threshold)
+        assert(t >= 4);
+
+    // Resumed: on the same problem it goes on; with another minScore, or
+    // an archive that lost its own, it is refused.
+    alias A = Archiving!(Deep, BinnedGrid);
+    auto stopped = A.runArchive(deep, grid, seeds, o, null, null, (const ref A.Run r) => r.iterations == 3);
+    auto copy = stopped;
+    copy.archive.elites = stopped.archive.elites.dup;
+    copy.archive.threshold = stopped.archive.threshold.dup;
+    auto other = Deep(Plane.init, 3);
+    assertThrown(A.runArchive(other, grid, null, o, null, &copy));
+    auto resumed = A.runArchive(deep, grid, null, o, null, &copy);
+    assert(sameBits(resumed.archive.threshold, byMember.archive.threshold) && resumed.evals == byMember.evals);
+    stopped.archive.minScore = 0;
+    assertThrown(A.runArchive(deep, grid, null, o, null, &stopped));
+
+    auto nowhere = Deep(Plane.init, double.nan);
+    assertThrown(A.runArchive(nowhere, grid, seeds, o));
 }
 
 unittest

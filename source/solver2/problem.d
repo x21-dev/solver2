@@ -46,6 +46,10 @@
 /// - Archive: `size_t descriptorCount() const` and
 ///   `void descriptors(const ref Eval, double[] d) const`: where it lands;
 ///   cells come from a grid (`isGrid`) over these values.
+/// - Archive, for a problem that knows it only when it runs:
+///   `double minScore() const`: the value's lower bound, where the
+///   archive's thresholds start. Without it they start at `Archiving`'s
+///   template argument.
 /// - Pre-screening penalty: `double screenPenalty(const(double)[] genes)`:
 ///   a known cost subtracted from a predicted objective (pleaser's
 ///   processing cost, which needs no render).
@@ -485,8 +489,9 @@ struct CauseCounts
 ///
 /// A subclass gives `genes`, `constraints`, `fingerprint` and
 /// `evaluateInto`, and what it wants of the rest. A caller needs to know
-/// nothing else about it: the start genes, the grid and the ranking come
-/// from the object.
+/// nothing else about it: the start genes, the grid, the ranking and the
+/// archive's `minScore` come from the object. solver2.dynamic has the
+/// searches over it as plain functions, which read them there.
 ///
 /// What the compiler checks of a compile-time problem is checked here when
 /// it runs: `evaluate` checks every batch `evaluateInto` fills, and
@@ -531,6 +536,11 @@ abstract class DynamicProblem
     /// How its candidates rank: offsets that fit its values (the manual's
     /// "Setting the offsets"). For the caller's options.
     Ranking ranking() const { return Ranking.init; }
+
+    /// The value's lower bound: no candidate within the limits has a value
+    /// (its objective less its soft breach) below it. The archive's
+    /// thresholds start there, and its QD score counts from it. Finite.
+    double minScore() const { return 0; }
 
     /// A known cost subtracted from a predicted objective, when a model
     /// pre-screens.
@@ -691,15 +701,16 @@ static assert(isProblem!DynamicProblem && hasDescriptors!DynamicProblem && hasSu
 /// Its description: genes with finite ranges (above 0 for a log scale),
 /// limits with weights that aren't negative, axes that fit `BinnedGrid`
 /// (ascending edges, a letter per bin) and count as many as its
-/// descriptors, a finite ranking, start genes in [0, 1], and predictions
-/// with as many descriptors as it has.
+/// descriptors, a finite ranking and `minScore`, start genes in [0, 1], and
+/// predictions with as many descriptors as it has.
 ///
 /// Its evaluation, on its start genes, both corners of gene space and
 /// `rows` rows drawn with `seed`, a quarter of a range outside [0, 1]: a
 /// row gives the same bits evaluated twice, in a batch in another order,
 /// and alone; `Scoring.feasibleOnly` changes no breach and no objective it
-/// computes; and every outcome passes `evaluate`'s checks. About
-/// 5 × (rows + 3) evaluations.
+/// computes; every outcome passes `evaluate`'s checks; and, for a problem
+/// with descriptors, no row within the limits has a value below
+/// `minScore`. About 5 × (rows + 3) evaluations.
 void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
 {
     import std.conv : text;
@@ -738,6 +749,8 @@ void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
     need(isFinite(r.hardOffset) && isFinite(r.terminalOffset) && isFinite(r.boundPenalty)
          && r.hardOffset >= r.terminalOffset && r.boundPenalty >= 0,
          "its ranking must be finite, the hard offset not below the terminal one, the bound penalty not negative");
+    immutable double lowest = p.minScore;
+    need(isFinite(lowest), "its minScore must be finite");
     const start = p.startGenes;
     foreach (i, v; start)
         need(v >= 0 && v <= 1, text("gene ", specs[i].name, ": its neutral value is outside its range"));
@@ -792,6 +805,14 @@ void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
         need(same(all[k], alone[0]), text("candidate ", k, " gave other bits alone than in a batch"));
         need(sameBreach(all[k], some[k]) && (!some[k].scored || some[k].objective is all[k].objective),
              text("candidate ", k, ": Scoring.feasibleOnly changed its breach or its objective"));
+        // The archive's thresholds start at minScore: a value below it
+        // never beats one.
+        if (nd > 0 && all[k].breach.feasible)
+        {
+            immutable double v = value(all[k].objective, all[k].breach);
+            need(v >= lowest, text("candidate ", k, " is within the limits with the value ", v,
+                                  ", below the problem's minScore ", lowest));
+        }
     }
 }
 
