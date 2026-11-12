@@ -79,7 +79,9 @@ Requirements:
 Build flags are your project's. solver adds none. pleaser builds with
 `--build=release-native`. If you change the target CPU, check that the
 floating-point results stay identical across the machines you need
-(see [Determinism](#determinism)).
+(see [Determinism](#determinism)). A release build leaves array bounds
+checks out of most of solver2's code; see
+[Bounds checks](#bounds-checks) to turn them on or off.
 
 Run solver's own tests with:
 
@@ -1461,6 +1463,66 @@ Your problem must keep them too:
 - **Allocation**: each generation allocates the batch's results and the
   clamped genes. That costs nothing next to a real evaluation. For a
   microsecond-scale problem, allocation can dominate.
+
+### Bounds checks
+
+D can check every array index and slice against the array's length, and
+throw a `RangeError` when one is out of range. Whether the check is
+compiled in is a build flag. solver2 is a source library, so your
+project's flag covers solver2's code as well as your own.
+
+| Build | What dub passes to LDC | Bounds checks |
+|---|---|---|
+| `dub build` (debug, the default) | nothing | on everywhere |
+| `--build=release` | `-release` | in `@safe` functions only |
+| `--build=release-nobounds` | `-release -boundscheck=off` | off everywhere |
+
+Most of solver2's loops are not `@safe`, so a release build runs them
+unchecked: an index past the end reads or writes whatever is there, and
+nothing reports it.
+
+**To turn them on in a release build**, give LDC `-boundscheck=on`:
+
+- for every build of your project, in its `dub.json`:
+
+  ```json
+  "dflags": ["-boundscheck=on"]
+  ```
+
+- for one build, in the `DFLAGS` environment variable, which dub adds to
+  its own flags:
+
+  ```
+  DFLAGS=-boundscheck=on dub build --compiler=ldc2 --build=release
+  ```
+
+  In PowerShell: `$env:DFLAGS = '-boundscheck=on'`, then the `dub`
+  command, then `Remove-Item Env:DFLAGS`.
+
+**To turn them off**, use `--build=release-nobounds`, or give
+`-boundscheck=off` in either of those two ways. `-boundscheck=safeonly`
+is the release default.
+
+A `-boundscheck` in a package's own `dflags` comes last on LDC's command
+line and wins: neither `DFLAGS` nor the build type changes it. To switch
+a project that sets it there, change its `dub.json`.
+
+**What they cost.** On 55 CMA-ES stages, five of them pre-screened by a
+learned model, over a problem whose evaluation costs nothing: 2.84 s
+with the checks against 2.25 s without, 26% more (LDC 1.42.0, Windows,
+2026-11-12). That is the cost in solver2's own code; a real evaluation
+makes it a small part of a run. The results are the same bits with or
+without them.
+
+**Asserts are a separate switch.** A release build compiles `assert`
+out, and `-enable-asserts` keeps it, passed the same way. solver2's
+asserts check what its callers hand it (matching array lengths, a grid's
+cell count).
+
+**The Python binding** (not built yet) will be built with bounds checks
+on: there a bug in D would otherwise corrupt the Python process instead
+of raising an error. How to build it without them is described with the
+binding.
 
 ---
 

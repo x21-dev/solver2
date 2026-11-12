@@ -12,8 +12,8 @@ Written 2026-11-12.
 | Step | State |
 |---|---|
 | 0. Set up | done 2026-11-12 |
-| 1. Spike: Python calls D | next |
-| 2. The class, completed | |
+| 1. Spike: Python calls D | done on Windows 2026-11-12: it works; Linux owed |
+| 2. The class, completed | next |
 | 3. Entry points and run-time `minScore` | |
 | 4. The C interface | |
 | 5. The Python module | |
@@ -174,9 +174,10 @@ What D needs inside another process:
 
 - an exported `init` that starts the D runtime before any other call,
   and a `term`;
-- calls from one thread, the one that called `init`. D's collector only
-  knows threads its runtime has seen; another thread must attach first
-  (`thread_attachThis`);
+- every thread that calls in known to the D runtime: the one that called
+  `init` is, and any other must attach first (`thread_attachThis`). The
+  spike (step 1) showed this working, and that the exported functions
+  can do it themselves;
 - the model's worker threads never call back: for a foreign problem,
   features and predictions use the D-side defaults;
 - the archive on the heap (`N = 0`), as the class route has it anyway. A
@@ -237,24 +238,115 @@ To repeat the comparison after a change to the searches: export solver
 and compare what the programs print (dub's own lines name the package and
 differ).
 
-### 1. Spike: Python calls D
+### 1. Spike: Python calls D (done on Windows 2026-11-12)
 
-The risky parts, tested before anything is designed around them. Throwaway
-code under `spike/`.
+The risky parts, tested before anything is designed around them. The
+verdict: **it works**, on Windows 11 with LDC 1.42.0 and Python 3.15.0
+(64-bit). Its Linux run waits for a Linux machine (step 6, "Linux before
+the remote").
 
-- A shared library with `init` and one function that runs `cmaStage` over
-  a problem whose `evaluate` is a C callback.
-- A Python script that loads it with `ctypes`, supplies the callback and
-  reads the result.
-- The same problem run natively in D, and the two results compared bit
-  for bit.
-- Done when it passes on Windows, including a run long enough for the
-  collector to run many times, and the findings are written into this
-  plan (build flags, how the runtime starts, anything that surprised).
-  Its Linux run waits for a Linux machine (step 6, "Linux before the
-  remote"): the spike's verdict covers Windows only until then.
-- If the D runtime can't be made to behave inside a Python process, stop
-  and bring it to Dev. The fallback is a D program driven over a pipe.
+The code is under `spike/`, throwaway, kept as the record:
+
+- `source/spike.d`: a shared library that runs `cmaStage` over a problem
+  whose `evaluate` is a C callback, plain or pre-screened by a
+  `LearnedModel` on its own `TaskPool`.
+- `source/native.d`: 50 plain stages and 5 pre-screened ones with the
+  callback in D, printing each stage's bits (a hash of every generation's
+  numbers and genes, the best and its genes).
+- `spike.py`: the same 55 stages with the callback in Python through
+  `ctypes`, then the checks below.
+
+To run it, in `spike/`:
+
+```
+dub build --compiler=ldc2 --build=release --config=native
+dub build --compiler=ldc2 --build=release --config=library
+./spike-native > native.out
+python spike.py > python.out      # then compare the two files
+python spike.py --checks          # also --stress, --probe, --numpy, --unattached
+```
+
+#### What it showed
+
+- **The same bits.** The 55 stages through the Python callback print
+  what the native ones print, byte for byte, the pre-screened ones with
+  three worker threads included. D's collector ran 80 times on the way.
+- **The runtime must be linked statically.** dub builds a
+  `dynamicLibrary` with `-fvisibility=public -dllimport=all`, which makes
+  the DLL need LDC's `druntime-ldc-shared.dll` and
+  `phobos2-ldc-shared.dll`. Python doesn't search `PATH` for a DLL's
+  dependencies, so loading fails ("Could not find module ... or one of
+  its dependencies"). With `"dflags": ["-fvisibility=hidden",
+  "-dllimport=none", "-link-defaultlib-shared=false"]` the DLL holds the
+  runtime (919 KB), exports only the functions marked `export`, and
+  loads. On Linux LDC also links the shared runtime into a shared library
+  by default, so the same flag is expected to be needed there (untested).
+- **The runtime doesn't start by itself.** A call before `init`
+  (`rt_init`) is an access violation. No `DllMain` is needed.
+- **Errors stay on their side.** A D exception is caught at the exported
+  function and returned as a code with its message. A Python exception in
+  the callback is kept by the wrapper, the callback returns non-zero, D
+  throws and unwinds, and the wrapper raises the Python exception again;
+  the next stage runs as before.
+- **Other threads.** A stage run from a second Python thread after
+  `thread_attachThis` gives the same bits. The D runtime doesn't know a
+  thread that hasn't attached (`Thread.getThis()` is null). Unattached,
+  51 stages still gave the same bits, but a collection started there
+  reclaimed nothing (192 MB in use where an attached thread had 64 MB).
+  So: attach, as druntime asks; unattached is not shown to be safe.
+- **A busy Python thread slows the callbacks.** `ctypes` releases the
+  interpreter lock during the D call and takes it again for each
+  callback. Beside a Python thread that never sleeps, each callback
+  waited about 5 ms for it (2600 callbacks in 14 s); the bits were the
+  same.
+- **The callback's cost**: about 17 µs for a batch of 8 candidates of 6
+  genes, the Python arithmetic included (55 stages, 25,500 callbacks:
+  2.68 s against 2.25 s native).
+- **numpy views work** (`np.ctypeslib.as_array` on D's arrays, nothing
+  copied), but `ndarray.sum` doesn't add in D's order: 49 of the 55
+  stages then differ from the native ones. A numpy problem is
+  deterministic by itself; it only can't be compared bit for bit with a
+  D reference unless it sums in the same order.
+- **A D bug in a `release` build is not caught.** An index one past the
+  end wrote out of bounds and returned success; a failed `assert` did
+  nothing (asserts are compiled out); a wild index and a null class
+  reference raised a Windows exception, which `ctypes` turns into an
+  `OSError`, with D's state left as it was. With `-boundscheck=on` both
+  bad indexes come back as errors ("index [3] is out of bounds for array
+  of length 3"), the bits are the same, and the 55 native stages take
+  2.84 s instead of 2.25 s (26% more, on a problem whose evaluation
+  costs nothing).
+
+#### What it changes in the design
+
+- **Build the binding with the three flags above**, on both platforms.
+- **Bounds checks on in the binding, and only there** (`-boundscheck=on`;
+  Dev's decision, 2026-11-12): a real problem's evaluation dwarfs the
+  26%, and a bug then reaches Python as an error instead of corrupting
+  the process. The core adds no flag: a D project builds it with its own.
+  The spike's library is built so (`spike/dub.json`), with the same
+  bits. Asserts stay off (`-enable-asserts` would keep them; not asked
+  for).
+- **How the flag can be switched** (checked with dub 1.41.0): a
+  package's own `dflags` come last on LDC's command line and win, so
+  neither the `DFLAGS` environment variable nor `--build=release-nobounds`
+  turns off a `-boundscheck=on` written in the binding's `dub.json`. The
+  binding therefore gets a second configuration without the flag
+  (working name `unchecked`), and the manual says how to build either. A
+  project without the flag in its `dub.json` is switched by `DFLAGS` or
+  the build type.
+- **Every exported function attaches the calling thread when the runtime
+  doesn't know it, and detaches it before returning**, so a caller on any
+  thread is safe and no thread ends while still attached. The rule "one
+  thread only" is then not needed; "one call at a time per object" still
+  is.
+- **The callback's status and the wrapper's kept exception**, as the
+  spike has them, are the error path for step 4 and step 5.
+- **The manual** (step 7) gets: the 5 ms wait beside a busy Python
+  thread, numpy's summation order, and the build flags.
+
+Not tried in the spike: the archive (the same callback path as a stage),
+saving and loading, Linux.
 
 ### 2. The class, completed
 
@@ -273,7 +365,10 @@ in solver.
 ### 4. The C interface
 
 The `bindings/c` package, with a C header written by hand and a test in D
-that drives the library through the exported functions only. Done when a
+that drives the library through the exported functions only. Built with
+the runtime linked statically and bounds checks on, and with a second
+configuration without the checks (step 1, "What it changes in the
+design"). Done when a
 stage, an archive, a learned model, and a save, load and resume all run
 through it, and a resumed run equals the uninterrupted one bit for bit.
 
@@ -335,8 +430,12 @@ Gaps and caveats true. Two new sections:
   stopping;
 - the learned model from Python;
 - saving and resuming;
-- what to know: one thread, exceptions, determinism of a Python
-  `evaluate`, cost per batch;
+- what to know: threads, exceptions, determinism of a Python
+  `evaluate` (numpy's summation order), cost per batch, the wait beside a
+  busy Python thread;
+- building the library with or without bounds checks: completes the
+  manual's "Bounds checks" (under Performance), which already covers a D
+  project and was written on 2026-11-12;
 - the C interface itself, for other languages.
 
 **Migrating from solver**
@@ -388,6 +487,10 @@ Keep this list as the work goes, for the manual's migration section.
    results, as pycma and pyribs do). Possible later without rewriting the
    searches, by running them in a D fiber that pauses at each `evaluate`.
    Not planned.
+7. **Bounds checks in the binding.** Decided 2026-11-12: on in the
+   Python binding only, and the manual says how to turn them on or off in
+   any case, for the binding and for a D project. The core, as a source
+   library, takes whatever flags its user builds with.
 
 ## How to work
 

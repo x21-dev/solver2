@@ -1,0 +1,31 @@
+{
+    "name": "solver2-spike",
+    "description": "Step 1 of docs/work-plan.md: Python calls D. Throwaway.",
+    "dependencies": {
+        "solver2": {
+            "path": ".."
+        }
+    },
+    "configurations": [
+        {
+            "name": "library",
+            "targetType": "dynamicLibrary",
+            "targetName": "spike",
+            "excludedSourceFiles": [
+                "source/native.d"
+            ],
+            "dflags": [
+                "-fvisibility=hidden",
+                "-dllimport=none",
+                "-link-defaultlib-shared=false",
+                "-boundscheck=on"
+            ]
+        },
+        {
+            "name": "native",
+            "targetType": "executable",
+            "targetName": "spike-native",
+            "mainSourceFile": "source/native.d"
+        }
+    ]
+}
