@@ -449,41 +449,204 @@ struct Outcome
 {
     bool     scored;
     double   objective = double.nan;
-    double[] violations;      // one per ConstraintSpec, 0 within
+    double[] violations;      // one per ConstraintSpec, 0 within; or none
     Breach   breach;          // breachOf(constraints, violations), or the problem's own sums
-    double[] descriptors;     // one per axis
-    double[] targets;         // surrogate targets; NaN where not measured
+    double[] descriptors;     // one per axis; needed when within the hard and terminal limits
+    double[] targets;         // for a subclass with its own `targets`: what it wants learned
 }
 
-/// A problem by virtual calls, for a test, a problem chosen at run time or
-/// a binding to another language (solver2 has none): one call per batch, so
-/// the dispatch costs nothing next to an evaluation. Satisfies `isProblem`, `hasDescriptors` and `isSaveable`.
+/// Why candidates broke their limits, for a `DynamicProblem`: per limit, in
+/// `constraints` order, the candidates over it.
+struct CauseCounts
+{
+    size_t[] over;
+
+    void opOpAssign(string op : "+")(const CauseCounts o) pure nothrow @safe
+    {
+        if (over.length < o.over.length)
+            over.length = o.over.length;
+        foreach (i, v; o.over)
+            over[i] += v;
+    }
+}
+
+/// A problem as a class: one that need not be known at compile time (a
+/// problem chosen or loaded at run time, a binding to another language), or
+/// a quick test. A search instantiated over `DynamicProblem` runs every
+/// subclass: each call is virtual, and there is one `evaluateInto` per
+/// batch, so the dispatch costs nothing next to an evaluation.
+///
+/// It is a problem like any other (`isProblem`), with descriptors, cause
+/// counts, the surrogate members and the saving members, so everything a
+/// search does for a compile-time problem it does for a subclass. The
+/// searches find a problem's optional members on its static type, which
+/// here is this class: so each optional member is declared here with a
+/// default that behaves as its absence does, and a subclass overrides it.
+///
+/// A subclass gives `genes`, `constraints`, `fingerprint` and
+/// `evaluateInto`, and what it wants of the rest. A caller needs to know
+/// nothing else about it: the start genes, the grid and the ranking come
+/// from the object.
+///
+/// What the compiler checks of a compile-time problem is checked here when
+/// it runs: `evaluate` checks every batch `evaluateInto` fills, and
+/// `checkProblem` checks a problem once, when it is met.
 abstract class DynamicProblem
 {
     alias Eval = Outcome;
+    alias Causes = CauseCounts;
 
-    const(GeneSpec)[]       genes() const;
-    const(ConstraintSpec)[] constraints() const;
-    const(string[2])[]      fingerprint() const;
+    // ── What a subclass gives ────────────────────────────────────────────
 
-    /// Fills `outcomes` (one per row of `genes`, in order).
-    void evaluateInto(const(double[])[] genes, Scoring scoring, Outcome[] outcomes);
+    /// The searched genes: their names, ranges and neutral values.
+    abstract const(GeneSpec)[] genes() const;
 
-    size_t descriptorCount() const { return 0; }
+    /// The limits, in the order of `Outcome.violations`.
+    abstract const(ConstraintSpec)[] constraints() const;
+
+    /// What a saved run must match to be resumed on this problem.
+    abstract const(string[2])[] fingerprint() const;
+
+    /// Fills `outcomes` (one per row of `genes`, in order; each starts as
+    /// `Outcome.init`). The genes come as sampled and may lie outside
+    /// [0, 1]: read them clamped (`GeneSpec.toPhysical` does). The same
+    /// genes must give the same bits whatever the batch, the order of the
+    /// other rows and the thread count.
+    ///
+    /// Each outcome needs its `breach` (never negative or NaN); when within
+    /// the hard and terminal limits, `scored`, its `objective` and its
+    /// `descriptors`; and its `violations` (one per limit) for the cause
+    /// counts.
+    abstract void evaluateInto(const(double[])[] genes, Scoring scoring, Outcome[] outcomes);
+
+    // ── What a subclass may override ─────────────────────────────────────
+
+    /// The archive's axes, one per descriptor: `grid` is a `BinnedGrid`
+    /// over them. None: the problem has no descriptors, or a grid of
+    /// another kind (then override `descriptorCount`).
+    const(Axis)[] axes() const { return null; }
+
+    size_t descriptorCount() const { return axes.length; }
+
+    /// How its candidates rank: offsets that fit its values (the manual's
+    /// "Setting the offsets"). For the caller's options.
+    Ranking ranking() const { return Ranking.init; }
+
+    /// A known cost subtracted from a predicted objective, when a model
+    /// pre-screens.
+    double screenPenalty(const(double)[] genes) { return 0; }
+
+    /// What to do when no seed of an archive is within the limits.
+    string noFeasibleSeed() const { return null; }
+
+    /// A resumed archive's cause counts: sized, when they weren't restored.
+    void adoptCauses(ref CauseCounts c) const
+    {
+        immutable size_t n = constraints.length;
+        if (c.over.length < n)
+            c.over.length = n;
+    }
+
+    /// The surrogate members (solver2.model's learning spec). The defaults
+    /// learn, from the genes, the value (the objective less the soft
+    /// breach, which is what a prediction is ranked by), the hard and the
+    /// terminal breach, and the descriptors. `features` and `predicted` are
+    /// called from several threads at once.
+    size_t featureCount() const { return dimension; }
+
+    /// ditto
+    void features(const(double)[] genes, double[] f) const { f[] = genes[]; }
+
+    /// ditto
+    size_t targetCount() const { return 3 + descriptorCount; }
+
+    /// ditto
+    void targets(const ref Outcome e, double[] t) const
+    {
+        t[0] = e.scored ? value(e.objective, e.breach) : double.nan;
+        t[1] = e.breach.hard;
+        t[2] = e.breach.terminal;
+        foreach (i; 3 .. t.length)
+            t[i] = i - 3 < e.descriptors.length ? e.descriptors[i - 3] : double.nan;
+    }
+
+    /// ditto
+    Predicted predicted(const(double)[] t) const
+    {
+        immutable double h = predictionHeadroom;
+        return Predicted(t[0], Breach(t[1] > h ? t[1] : 0, t[2] > h ? t[2] : 0), t[3 .. $].dup);
+    }
+
+    /// How far over a limit the default `predicted` lets a prediction be
+    /// before it counts as a breach, in the breaches' units. A model's
+    /// errors put many candidates a little over: set this to about its
+    /// error on a breach.
+    double predictionHeadroom() const { return 0; }
+
+    // ── What the searches call ───────────────────────────────────────────
 
     final size_t dimension() const { return genes.length; }
 
+    /// The grid over `axes`.
+    final BinnedGrid grid() const { return BinnedGrid(axes); }
+
+    /// Genes to start a search from: each gene's neutral value, the middle
+    /// of its range where it has none.
+    final double[] startGenes() const
+    {
+        const specs = genes;
+        auto x = new double[specs.length];
+        foreach (i, ref s; specs)
+        {
+            immutable double g = s.fixed || isNaN(s.neutral) ? 0.5 : s.toGene(s.neutral);
+            x[i] = isNaN(g) ? 0.5 : g;
+        }
+        return x;
+    }
+
+    /// `evaluateInto`, and its outcomes checked: an Exception says what a
+    /// candidate lacks.
     final Outcome[] evaluate(const(double[])[] g, Scoring scoring)
     {
         auto o = new Outcome[g.length];
         evaluateInto(g, scoring, o);
+        checkOutcomes(o);
         return o;
+    }
+
+    private void checkOutcomes(const(Outcome)[] o) const
+    {
+        import std.conv : text;
+        import std.exception : enforce;
+        immutable size_t limits = constraints.length, nd = descriptorCount;
+        foreach (k, ref e; o)
+        {
+            string where() { return text(typeid(this).name, ", candidate ", k, " of ", o.length, ": "); }
+            enforce(e.breach.hard >= 0 && e.breach.terminal >= 0 && e.breach.soft >= 0,
+                    where ~ "a breach is negative or NaN");
+            enforce(e.violations.length == 0 || e.violations.length == limits,
+                    where ~ text(e.violations.length, " violations for ", limits, " limits"));
+            if (!e.breach.feasible)
+                continue;
+            enforce(e.scored && !isNaN(e.objective), where ~ "within the limits, but without an objective");
+            enforce(e.descriptors.length == nd,
+                    where ~ text("within the limits, with ", e.descriptors.length, " descriptors for ", nd));
+        }
     }
 
     final bool   scored(const ref Outcome e) const { return e.scored; }
     final double objective(const ref Outcome e) const { return e.objective; }
     final Breach breach(const ref Outcome e) const { return e.breach; }
     final void   descriptors(const ref Outcome e, double[] d) const { d[] = e.descriptors[]; }
+
+    final CauseCounts newCauses() const { return CauseCounts(new size_t[constraints.length]); }
+
+    final void countCauses(ref CauseCounts c, const ref Outcome e) const
+    {
+        foreach (i, v; e.violations)
+            if (i < c.over.length)
+                c.over[i] += v > 0;
+    }
 
     final void saveEval(const ref Outcome e, ref string[2][] fields) const
     {
@@ -518,7 +681,119 @@ abstract class DynamicProblem
     }
 }
 
-static assert(isProblem!DynamicProblem && hasDescriptors!DynamicProblem && isSaveable!DynamicProblem);
+static assert(isProblem!DynamicProblem && hasDescriptors!DynamicProblem && hasSurrogate!DynamicProblem
+              && isSaveable!DynamicProblem);
+
+/// Checks a problem met at run time, as the compiler and a problem's own
+/// unittests check one known at compile time. Throws an Exception that says
+/// what is wrong.
+///
+/// Its description: genes with finite ranges (above 0 for a log scale),
+/// limits with weights that aren't negative, axes that fit `BinnedGrid`
+/// (ascending edges, a letter per bin) and count as many as its
+/// descriptors, a finite ranking, start genes in [0, 1], and predictions
+/// with as many descriptors as it has.
+///
+/// Its evaluation, on its start genes, both corners of gene space and
+/// `rows` rows drawn with `seed`, a quarter of a range outside [0, 1]: a
+/// row gives the same bits evaluated twice, in a batch in another order,
+/// and alone; `Scoring.feasibleOnly` changes no breach and no objective it
+/// computes; and every outcome passes `evaluate`'s checks. About
+/// 5 × (rows + 3) evaluations.
+void checkProblem(DynamicProblem p, size_t rows = 8, ulong seed = 1)
+{
+    import std.conv : text;
+    import std.exception : enforce;
+    import std.math : isFinite;
+    import solver2.rng : SplitMix64;
+
+    immutable string name = typeid(p).name;
+    void need(bool ok, lazy string what) { enforce(ok, name ~ ": " ~ what); }
+
+    // The description.
+    const specs = p.genes;
+    immutable size_t n = specs.length, nd = p.descriptorCount;
+    need(n > 0, "no genes");
+    foreach (ref g; specs)
+    {
+        need(isFinite(g.lo) && isFinite(g.hi) && g.lo <= g.hi,
+             text("gene ", g.name, ": its range must be finite, lo to hi"));
+        need(g.scale != Scale.log || g.lo > 0, text("gene ", g.name, ": a log scale needs lo above 0"));
+    }
+    foreach (ref c; p.constraints)
+        need(c.weight >= 0 && isFinite(c.weight),
+             text("limit ", c.name, ": its weight must be finite and not negative"));
+    const axes = p.axes;
+    need(axes.length == 0 || axes.length == nd, text(axes.length, " axes for ", nd, " descriptors"));
+    foreach (ref a; axes)
+    {
+        need(a.letters.length == a.bins,
+             text("axis ", a.name, ": ", a.letters.length, " letters for ", a.bins, " bins"));
+        need(a.nanBin < a.bins, text("axis ", a.name, ": its NaN bin is not one of its bins"));
+        need(a.width > 0 && isFinite(a.width), text("axis ", a.name, ": its width must be finite and above 0"));
+        foreach (i, e; a.edges)
+            need(!isNaN(e) && (i == 0 || a.edges[i - 1] < e), text("axis ", a.name, ": its edges must ascend"));
+    }
+    const r = p.ranking;
+    need(isFinite(r.hardOffset) && isFinite(r.terminalOffset) && isFinite(r.boundPenalty)
+         && r.hardOffset >= r.terminalOffset && r.boundPenalty >= 0,
+         "its ranking must be finite, the hard offset not below the terminal one, the bound penalty not negative");
+    const start = p.startGenes;
+    foreach (i, v; start)
+        need(v >= 0 && v <= 1, text("gene ", specs[i].name, ": its neutral value is outside its range"));
+    need(p.featureCount > 0 && p.targetCount > 0, "a learning spec needs features and targets");
+    need(p.predicted(new double[p.targetCount]).descriptors.length == nd,
+         text("predicted gives another number of descriptors than the problem's ", nd));
+
+    // The evaluation.
+    auto rng = SplitMix64(seed);
+    auto zeros = new double[n], ones = new double[n];
+    zeros[] = 0;
+    ones[] = 1;
+    double[][] batch = [start.dup, zeros, ones];
+    foreach (_; 0 .. rows)
+    {
+        auto row = new double[n];
+        foreach (ref v; row)
+            v = 1.5 * rng.uniform01() - 0.25;
+        batch ~= row;
+    }
+    static bool sameBits(const(double)[] a, const(double)[] b)
+    {
+        if (a.length != b.length)
+            return false;
+        foreach (i; 0 .. a.length)
+            if (a[i] !is b[i])
+                return false;
+        return true;
+    }
+    static bool sameBreach(const ref Outcome a, const ref Outcome b)
+    {
+        return a.breach.hard is b.breach.hard && a.breach.terminal is b.breach.terminal
+            && a.breach.soft is b.breach.soft && sameBits(a.violations, b.violations);
+    }
+    static bool same(const ref Outcome a, const ref Outcome b)
+    {
+        return a.scored == b.scored && a.objective is b.objective && sameBreach(a, b)
+            && sameBits(a.descriptors, b.descriptors) && sameBits(a.targets, b.targets);
+    }
+    const all = p.evaluate(batch, Scoring.all);
+    const again = p.evaluate(batch, Scoring.all);
+    auto reversed = new double[][batch.length];
+    foreach (k, row; batch)
+        reversed[$ - 1 - k] = row;
+    const back = p.evaluate(reversed, Scoring.all);
+    const some = p.evaluate(batch, Scoring.feasibleOnly);
+    foreach (k, row; batch)
+    {
+        need(same(all[k], again[k]), text("candidate ", k, " gave other bits when evaluated again"));
+        need(same(all[k], back[$ - 1 - k]), text("candidate ", k, " gave other bits in another place of its batch"));
+        const alone = p.evaluate([row], Scoring.all);
+        need(same(all[k], alone[0]), text("candidate ", k, " gave other bits alone than in a batch"));
+        need(sameBreach(all[k], some[k]) && (!some[k].scored || some[k].objective is all[k].objective),
+             text("candidate ", k, ": Scoring.feasibleOnly changed its breach or its objective"));
+    }
+}
 
 /// The first entry of `saved` that `now` lacks or holds differently, as a
 /// message; null when they agree. Order doesn't matter; entries only in

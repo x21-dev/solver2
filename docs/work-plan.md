@@ -13,16 +13,16 @@ Written 2026-11-12.
 |---|---|
 | 0. Set up | done 2026-11-12 |
 | 1. Spike: Python calls D | done on Windows 2026-11-12: it works; Linux owed |
-| 2. The class, completed | next |
-| 3. Entry points and run-time `minScore` | |
+| 2. The class, completed | done 2026-11-12 |
+| 3. Entry points and run-time `minScore` | next |
 | 4. The C interface | |
 | 5. The Python module | |
 | 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
 | 7. The manual | |
 
-solver2 is solver's code with the package and modules renamed, and
-nothing else changed: its tests pass and the worked example prints what
-solver's does (step 0 has the details).
+solver2 is solver's code with the package and modules renamed, plus the
+completed `DynamicProblem` (step 2). The searches themselves are
+unchanged: the worked example still prints what solver's does.
 
 ## What solver2 is
 
@@ -129,7 +129,8 @@ microsecond-scale problem.
   headroom. A subclass may override them. `features` and `predicted` are
   called from several threads at once.
 - **Self-description**, so a caller needs to know nothing else: the grid's
-  axes, the ranking, `minScore`, and start genes from `GeneSpec.neutral`.
+  axes, the ranking, `minScore` (with step 3), and start genes from
+  `GeneSpec.neutral`.
 - **Run-time checks** in the final `evaluate`: array lengths, breaches
   not negative and not NaN. And a `checkProblem(p)` to run on a problem
   when it is loaded: rows evaluated alone and in a batch, and twice, give
@@ -348,12 +349,58 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
 Not tried in the spike: the archive (the same callback path as a stage),
 saving and loading, Linux.
 
-### 2. The class, completed
+### 2. The class, completed (done 2026-11-12)
 
-Everything under "The class, completed", with tests that run a stage, an
-archive, a pre-screened stage and a resumed run over a subclass used only
-through the base class. Done when those pass and a subclass's
-`screenPenalty` and cause counts are shown to take effect.
+`DynamicProblem` in `source/solver2/problem.d` now has everything under
+"The class, completed" but `minScore`, which comes with the code that
+reads it (step 3). `stage.d`, `archive.d` and `model.d` are untouched.
+
+- **Defaults**: `screenPenalty` 0, `noFeasibleSeed` null, `adoptCauses`
+  sizing the counts.
+- **Cause counts**: `CauseCounts`, one count per limit, from
+  `Outcome.violations`.
+- **The learning spec**: `LearnedModel!DynamicProblem` compiles and runs.
+  The default targets are the value (not the objective), the hard and
+  the terminal breach, and the descriptors; `predictionHeadroom` is the
+  one knob.
+- **Self-description**: `axes` and `grid`, `ranking`, `startGenes`;
+  `descriptorCount` defaults to `axes.length`.
+- **Run-time checks**: `evaluate` checks every batch; `checkProblem`
+  checks a problem once.
+- The required members are now `abstract`, so a subclass that forgets one
+  fails where it is constructed, not at link time.
+
+The tests are in the new `source/solver2/dynamic.d` (which the entry
+points of step 3 join): a subclass used only through a `DynamicProblem`
+variable, against the same problem as a struct with none of the optional
+members.
+
+- A stage and an archive give the struct's bits, with cause counts on
+  top.
+- A pre-screened stage gives the struct's bits with the default
+  `screenPenalty`; a subclass's is called through the base class
+  (28 generations × 32 candidates) and changes the picks.
+- A subclass's `noFeasibleSeed` hint reaches `NoFeasibleSeed`.
+- An archive stopped, saved as plain data and resumed equals the
+  uninterrupted one, cause counts included.
+- A pre-screened stage and model-guided emitters with
+  `LearnedModel!DynamicProblem` run, the same twice.
+- `checkProblem` passes a sound problem and names what is wrong with five
+  unsound ones; `evaluate` refuses three kinds of malformed outcome.
+
+Checked on Windows: `dub test` (10 modules), the example's tests and its
+run, whose output is still solver's; the spike rebuilt against the
+changed core gives the same lines.
+
+Found on the way, for step 7's manual and its Gaps and caveats:
+
+- **A prediction is ranked by its objective, ignoring a predicted soft
+  breach** (`predictedFitness` in `archive.d`, `predictScore` in
+  `stage.d`), while an evaluation is ranked by its value. A learning spec
+  for a problem with soft limits should therefore learn the value. The
+  class's defaults do; the worked example's `Beam` learns the objective.
+- `checkProblem` can only catch a problem that isn't deterministic on the
+  rows it tries.
 
 ### 3. Entry points and run-time `minScore`
 
@@ -463,8 +510,16 @@ Keep this list as the work goes, for the manual's migration section.
   `solver2.*`. A project changes its dependency (`"solver2": { "path":
   "../solver2" }`) and its imports (`import solver.problem;` becomes
   `import solver2.problem;`, and so for `stage`, `archive`, `model`,
-  `ensemble`, `cmaes`, `bytes`, `rng`, `detmath`). Nothing else differs
-  yet, and the bits are the same.
+  `ensemble`, `cmaes`, `bytes`, `rng`, `detmath`). The bits are the same.
+- **A subclass of `DynamicProblem`** (step 2; no project is known to have
+  one): `genes`, `constraints`, `fingerprint` and `evaluateInto` are
+  `abstract`. The class now declares `axes`, `ranking`, `screenPenalty`,
+  `noFeasibleSeed`, `adoptCauses`, `featureCount`, `features`,
+  `targetCount`, `targets`, `predicted`, `predictionHeadroom`, `grid`,
+  `startGenes`, `newCauses` and `countCauses`: a subclass with a member of
+  one of those names must `override` it (the last four are final). Its
+  outcomes are now checked: one within the limits needs `scored`, an
+  objective and its descriptors.
 
 ## Open questions for Dev
 

@@ -2,7 +2,9 @@
 
 > **In solver2 this is still solver's manual**, as of solver commit
 > `ae68dbb`, with the package and module names changed to `solver2`
-> (`import solver2.problem;`). Where it says solver, read solver2. Step 7
+> (`import solver2.problem;`), but for two sections written for solver2:
+> [Dynamic problems](#dynamic-problems) and [Bounds checks](#bounds-checks).
+> Where it says solver, read solver2. Step 7
 > of the [work plan](work-plan.md) brings it to solver2's state and adds
 > the sections on Python and on migrating from solver.
 
@@ -321,14 +323,119 @@ fingerprint and a `noFeasibleSeed` hint. Start from a copy of it.
 
 ### Dynamic problems
 
-`DynamicProblem` is an abstract class for problems behind virtual calls,
-such as a test, a problem chosen at run time or a binding to another
-language of your own (solver has no bindings). It satisfies
-`isProblem`, `hasDescriptors` and `isSaveable`. Its `Eval` is `Outcome`,
-which has `scored`, `objective`, `violations`, `breach`, `descriptors` and
-`targets`. Override `genes`, `constraints`, `fingerprint`, `evaluateInto`,
-and `descriptorCount` if you use the archive. Each call covers a whole
-batch, so the dispatch cost is small next to an evaluation.
+`DynamicProblem` is an abstract class: a problem that need not be known
+at compile time, such as one chosen or loaded at run time, a binding to
+another language, or a quick test. Instantiate a search over
+`DynamicProblem` itself (`cmaStage` with a variable of that type,
+`Archiving!(DynamicProblem, BinnedGrid)`, `LearnedModel!DynamicProblem`)
+and it runs every subclass. Each call is virtual, and there is one
+`evaluateInto` per batch, so the dispatch costs nothing next to an
+evaluation. A subclass gets everything a compile-time problem gets, and
+the same bits: solver2's tests hold a subclass, used only through the
+base class, to the bits of the same problem written as a struct.
+
+Its `Eval` is `Outcome`: `scored`, `objective`, `violations` (one per
+limit, 0 within), `breach`, `descriptors` and `targets`.
+
+**A subclass must give** four members:
+
+```d
+final class Field : DynamicProblem
+{
+    override const(GeneSpec)[] genes() const { return spec[]; }
+    override const(ConstraintSpec)[] constraints() const { return limits[]; }
+    override const(string[2])[] fingerprint() const { return [["problem", "field 1"]]; }
+
+    override void evaluateInto(const(double[])[] genes, Scoring scoring, Outcome[] outcomes)
+    {
+        foreach (k, g; genes)                    // genes as sampled: toPhysical clamps
+        {
+            immutable double x = spec[0].toPhysical(g[0]), y = spec[1].toPhysical(g[1]);
+            outcomes[k].violations = [x + y > 1.9 ? x + y - 1.9 : 0];
+            outcomes[k].breach = breachOf(limits[], outcomes[k].violations);
+            outcomes[k].scored = scoring == Scoring.all || outcomes[k].breach.hard == 0;
+            if (outcomes[k].scored)
+                outcomes[k].objective = 10 - (x - 1) * (x - 1) - (y - 0.8) * (y - 0.8);
+            outcomes[k].descriptors = [x, y];
+        }
+    }
+}
+```
+
+Each outcome needs its `breach`; when it is within the hard and terminal
+limits, also `scored`, its `objective` and its `descriptors`; and its
+`violations` if you want cause counts.
+
+**A subclass may override** the rest. The searches look for a problem's
+optional members on its static type, which here is the base class, so
+each one is declared there with a default that behaves as its absence
+does:
+
+| Member | Default | Purpose |
+|---|---|---|
+| `const(Axis)[] axes() const` | none | The archive's axes, one per descriptor. `grid()` is the `BinnedGrid` over them. |
+| `size_t descriptorCount() const` | `axes.length` | Override it for a grid of another kind. |
+| `Ranking ranking() const` | `Ranking.init` | Offsets that fit the problem's values, for the caller's options (see [Setting the offsets](#setting-the-offsets)). |
+| `double screenPenalty(const(double)[] genes)` | 0 | A known cost subtracted from a predicted objective. |
+| `string noFeasibleSeed() const` | null | The hint in `NoFeasibleSeed`'s message. |
+| `void adoptCauses(ref CauseCounts) const` | sizes them | A resumed archive's cause counts, when they weren't restored. |
+| `featureCount`, `features`, `targetCount`, `targets`, `predicted` | see below | The learning spec for `LearnedModel!DynamicProblem`. |
+| `double predictionHeadroom() const` | 0 | How far over a limit a prediction may be before the default `predicted` counts it as a breach. |
+
+Remember `override`: a member with one of these names and another
+signature doesn't replace the default.
+
+**What a caller needs comes from the object**, so the caller can run a
+problem it knows nothing else about:
+
+```d
+DynamicProblem p = load(...);                   // any subclass
+checkProblem(p);                                // see below
+
+Best!Outcome best;
+StageOptions so = {lambda: 8, sigma: 0.2, budget: 800, seed: 42, ranking: p.ranking};
+cmaStage(p, best, p.startGenes, so, null);
+
+alias A = Archiving!(DynamicProblem, BinnedGrid);
+const grid = p.grid;
+ArchiveOptions ao = {evals: 4000, seed: 9, ranking: p.ranking};
+auto run = A.runArchive(p, grid, [best.genes], ao);
+```
+
+`startGenes()` is each gene's `neutral` value, or the middle of its range
+where it has none.
+
+**Cause counts** come for free: `Causes` is `CauseCounts`, whose `over[i]`
+counts the candidates over limit `i` of `constraints`, from each
+outcome's `violations`.
+
+**The learning spec's defaults** learn from the genes: the value (the
+objective less the soft breach, which is what a prediction is ranked
+by), the hard breach, the terminal breach, and the descriptors. Set
+`predictionHeadroom` to about the model's error on a breach, in the
+breaches' units; at 0 a prediction a hair over a limit counts as over it.
+Override `targets` and `predicted` together to learn something else
+(`Outcome.targets` is there to carry it). `features` and `predicted` are
+called from several threads at once.
+
+**Checks at run time.** The compiler checks a compile-time problem; a
+class is checked when it runs:
+
+- `evaluate` (final; it calls your `evaluateInto`) checks every batch:
+  no breach negative or NaN, as many violations as limits, and for a
+  candidate within the limits an objective and as many descriptors as
+  the problem has. It throws an `Exception` naming the class, the
+  candidate and what it lacks.
+- `checkProblem(p, rows = 8, seed = 1)` checks a problem once, when you
+  meet it. Its description: finite gene ranges, axes that fit
+  `BinnedGrid`, a finite ranking, start genes in range. And its
+  evaluation, on the start genes, both corners and `rows` random rows
+  (some outside [0, 1]): the same bits when evaluated twice, in a batch
+  in another order, and alone, and `Scoring.feasibleOnly` changing no
+  breach and no objective it computes. It costs about 5 × (`rows` + 3)
+  evaluations and throws an `Exception` saying what is wrong. It can't
+  prove a problem deterministic, only catch one that isn't on these
+  rows.
 
 ---
 
@@ -1562,7 +1669,8 @@ one says what it costs you and how to work around it today.
 
 | Module | What it holds |
 |---|---|
-| `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `DynamicProblem`, `fingerprintMismatch` |
+| `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `CauseCounts`, `DynamicProblem`, `checkProblem`, `fingerprintMismatch` |
+| `solver2.dynamic` | Nothing to import yet: the tests that hold a `DynamicProblem` subclass to a compile-time problem's bits |
 | `solver2.stage` | `StageModel`, `StageOptions`, `Best`, `hasCauses`, `StageGeneration`, `StageEnd`, `StageRun`, `cmaStage`, `pickRendered`, `stalled` |
 | `solver2.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
 | `solver2.model` | `isLearning`, `LearnedModel`, `ColumnStats`, `columnStats` |
