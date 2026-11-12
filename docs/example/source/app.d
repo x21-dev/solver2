@@ -10,11 +10,11 @@ import std.path : buildPath;
 import std.stdio : writefln;
 
 static import checkpoint;
-import solver.archive;
-import solver.bytes : Bytes;
-import solver.model : LearnedModel, isLearning;
-import solver.problem;
-import solver.stage;
+import solver2.archive;
+import solver2.bytes : Bytes;
+import solver2.model : LearnedModel, isLearning;
+import solver2.problem;
+import solver2.stage;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The problem
@@ -150,7 +150,7 @@ ArchiveOptions archiveOptions()
 /// The checkpoint file's magic string and format version. Bump the
 /// version when a saved field changes meaning or type, and teach load to
 /// read the older one; adding a field needs no bump (see checkpoint.d).
-enum string MAGIC = "solver-example checkpoint";
+enum string MAGIC = "solver2-example checkpoint";
 enum uint FORMAT = 1;
 
 /// What a checkpoint holds: the problem's fingerprint, the run's state, its
@@ -218,7 +218,7 @@ void main()
     const seeds = [best.genes];
     const whole = A.runArchive(p, grid, seeds, ao, null, null, null, null, new Model(Beam(), 5, null));
 
-    immutable path = buildPath(tempDir, "solver-example.state");
+    immutable path = buildPath(tempDir, "solver2-example.state");
     {
         auto model = new Model(Beam(), 5, null);
         const stopped = A.runArchive(p, grid, seeds, ao, null, null, (const ref A.Run r) => r.iterations == 10,

@@ -1,9 +1,8 @@
 #!/bin/bash
 # Sets up D for Claude Code on the web: LDC 1.42.0 (with dub), the way
-# satisfaction's and pleaser's hooks do. solver has no dub dependencies, so
+# satisfaction's and pleaser's hooks do. solver2 has no dub dependencies, so
 # afterwards `dub test --compiler=ldc2` and the worked example in
-# docs/example build as they are. To build pleaser against this checkout,
-# open the session on pleaser instead (its hook fetches the rest).
+# docs/example build as they are.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then

@@ -6,12 +6,12 @@
 /// Deterministic: a fixed RNG (SplitMix64 with Box-Muller), a stable sort on
 /// fitness with ties broken by index, and a Jacobi eigensolver with a fixed
 /// sweep order, so a seed gives the same run on any machine or thread count.
-module solver.cmaes;
+module solver2.cmaes;
 
 import std.algorithm : sort, SwapStrategy;
 import std.math : cos, exp, log, sqrt, PI, abs;
 
-import solver.rng : SplitMix64;
+import solver2.rng : SplitMix64;
 
 struct CmaEs
 {

@@ -59,14 +59,14 @@
 ///   learns; NaN where not measured), and
 ///   `Predicted predicted(const(double)[] t) const`: a predicted target
 ///   row read as objective, breach and descriptors. A problem with these
-///   is a learning spec for solver.model's `LearnedModel` as it is; a
+///   is a learning spec for solver2.model's `LearnedModel` as it is; a
 ///   separate struct with them (and `Eval` and `dimension`) is one too.
 /// - Saving: `const(string[2])[] fingerprint() const` (what a saved run
 ///   must match to be resumed: stems, ranges, limits), and
 ///   `void saveEval(const ref Eval, ref string[2][] fields) const` with
 ///   `Eval loadEval(const(string[2])[] fields) const`, for evaluations kept
 ///   in a checkpoint (an archive's elites) without evaluating them again.
-module solver.problem;
+module solver2.problem;
 
 import std.math : exp, isNaN, log;
 import std.traits : ReturnType;
@@ -262,7 +262,7 @@ enum bool hasDescriptors(P) = isProblem!P && is(typeof((const ref P cp, const re
 }));
 
 /// Whether `P` can be modelled by a surrogate: then it is also a learning
-/// spec (solver.model's `isLearning`).
+/// spec (solver2.model's `isLearning`).
 enum bool hasSurrogate(P) = isProblem!P && is(typeof((const ref P cp, const ref P.Eval e,
                                                       const(double)[] x, double[] f)
 {
@@ -456,7 +456,7 @@ struct Outcome
 }
 
 /// A problem by virtual calls, for a test, a problem chosen at run time or
-/// a binding to another language (solver has none): one call per batch, so
+/// a binding to another language (solver2 has none): one call per batch, so
 /// the dispatch costs nothing next to an evaluation. Satisfies `isProblem`, `hasDescriptors` and `isSaveable`.
 abstract class DynamicProblem
 {

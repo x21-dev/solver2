@@ -5,8 +5,24 @@ it out. Read it all before starting, and keep it true: when a step is
 done, a decision is made or the plan changes, update it in the same
 change.
 
-Written 2026-11-12. Nothing is built yet: the repository holds this
-document only.
+Written 2026-11-12.
+
+## Where the work stands
+
+| Step | State |
+|---|---|
+| 0. Set up | done 2026-11-12 |
+| 1. Spike: Python calls D | next |
+| 2. The class, completed | |
+| 3. Entry points and run-time `minScore` | |
+| 4. The C interface | |
+| 5. The Python module | |
+| 6. CI | waits for a remote (open question 5) |
+| 7. The manual | |
+
+solver2 is solver's code with the package and modules renamed, and
+nothing else changed: its tests pass and the worked example prints what
+solver's does (step 0 has the details).
 
 ## What solver2 is
 
@@ -194,19 +210,32 @@ One branch and one pull request per step once the repository has a
 remote; until then, one commit per step. Each step lists what makes it
 done.
 
-### 0. Set up
+### 0. Set up (done 2026-11-12)
 
-- Copy solver's tree at the commit above: `source/`, `docs/`, `dub.json`,
-  `README.md`, `CLAUDE.md`, `.github/`, `.claude/`. Record the commit in
-  the first commit's message.
-- Rename the package and the modules (open question 1).
-- `CLAUDE.md` for solver2: solver's, less what binds it to pleaser
-  (golden runs against pleaser), plus the rule above about not changing
-  the other projects, and a pointer to this plan.
-- Done when `dub test --compiler=ldc2` passes, and in `docs/example` both
-  `dub test --compiler=ldc2` and `dub run --compiler=ldc2
-  --build=release`, with the example's output the same as solver's on
-  this machine.
+- solver's tree at the commit above, copied with `git archive`: every
+  tracked file but `docs/next-session.md` (solver's hand-over; this plan
+  is solver2's).
+- The package is `solver2` and the modules `solver2.*`, in
+  `source/solver2/` (Dev's choice, 2026-11-12). The worked example is
+  `solver2-example`, and its checkpoint's magic string and temporary file
+  are named so too, so that it never reads or overwrites solver's.
+- `CLAUDE.md` and `README.md` are solver2's. The manual is solver's with
+  the module names changed and a note at its top saying so; step 7
+  rewrites it.
+- `.github/workflows/ci.yml` and the SessionStart hook are solver's; the
+  workflow runs nothing until there is a remote.
+- Checked on Windows 11 with LDC 1.42.0: `dub test --compiler=ldc2`
+  passes (9 modules), and in `docs/example` `dub test --compiler=ldc2`
+  (10 modules) and `dub run --compiler=ldc2 --build=release`. The
+  example's 12 lines of output are byte-identical to those of solver's
+  example at `ae68dbb`, built from an export of that commit outside
+  `../solver`. Not run on Linux.
+
+To repeat the comparison after a change to the searches: export solver
+(`git -C ../solver archive ae68dbb | tar -x -C <dir>`), run
+`dub run --compiler=ldc2 --build=release` in both `docs/example` folders,
+and compare what the programs print (dub's own lines name the package and
+differ).
 
 ### 1. Spike: Python calls D
 
@@ -297,14 +326,18 @@ Also the `README.md`.
 
 Keep this list as the work goes, for the manual's migration section.
 
-- (none yet)
+- **The names** (step 0): the dub package is `solver2` and every module
+  `solver2.*`. A project changes its dependency (`"solver2": { "path":
+  "../solver2" }`) and its imports (`import solver.problem;` becomes
+  `import solver2.problem;`, and so for `stage`, `archive`, `model`,
+  `ensemble`, `cmaes`, `bytes`, `rng`, `detmath`). Nothing else differs
+  yet, and the bits are the same.
 
 ## Open questions for Dev
 
-1. **Names.** Package `solver2` with modules `solver2.*` (recommended: a
-   build can never pick up the wrong library, and migration is a search
-   and replace of the imports), or keep the modules as `solver.*` so that
-   only the `dub.json` path changes.
+1. **Names.** Decided 2026-11-12: package `solver2`, modules `solver2.*`.
+   A build can never pick up the wrong library, and migration is a search
+   and replace of the imports.
 2. **Checkpoints.** solver has no checkpoint API by decision: the save
    format is the manual's template, copied by each project. Python can't
    walk D structs, so the binding has to export a run as bytes.
@@ -327,7 +360,7 @@ Keep this list as the work goes, for the manual's migration section.
   in the core, and in `docs/example` both `dub test --compiler=ldc2` and
   `dub run --compiler=ldc2 --build=release`; from step 4 the binding's
   tests, from step 5 the Python tests.
-- Determinism and D style: solver's `CLAUDE.md`, copied in step 0. In
+- Determinism and D style: `CLAUDE.md`, as in solver. In
   short: seeded noise only through `SplitMix64`; no `@fastmath` or
   `-fp-contract=fast`; fixed-order sums; goldens per platform; a test
   that needs an event during a run forces it; large values off the stack.

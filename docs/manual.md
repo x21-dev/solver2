@@ -1,14 +1,20 @@
 # solver: developer manual
 
+> **In solver2 this is still solver's manual**, as of solver commit
+> `ae68dbb`, with the package and module names changed to `solver2`
+> (`import solver2.problem;`). Where it says solver, read solver2. Step 7
+> of the [work plan](work-plan.md) brings it to solver2's state and adds
+> the sections on Python and on migrating from solver.
+
 solver is a deterministic black-box optimiser for D, built with LDC. You
 describe a problem: genes in [0, 1], an evaluation type of your own,
 an objective to maximise, and limits in three tiers. solver searches it
 with two tools:
 
-- **A CMA-ES stage** (`solver.stage`) finds the best candidate from a
+- **A CMA-ES stage** (`solver2.stage`) finds the best candidate from a
   start point. It stops early when progress stalls, and a learned model
   can pre-screen its candidates.
-- **An archive** (`solver.archive`) runs CMA-MAE, aimed at reaching cells
+- **An archive** (`solver2.archive`) runs CMA-MAE, aimed at reaching cells
   no candidate has found yet. It keeps the best candidate in every cell of
   a grid over your problem's descriptors, and its explorers head straight
   for empty cells. It has optional model-guided and pre-screened
@@ -20,7 +26,7 @@ the rules in [Determinism](#determinism). Across platforms runs differ.
 
 This manual describes solver main as of 2026-10-29: the extraction from
 pleaser finished (solver#1 to #8), CI on Linux and Windows (#10), the
-checkpoint template (#11) and `solver.detmath` (#12). Everything here was
+checkpoint template (#11) and `solver2.detmath` (#12). Everything here was
 checked against that code. The worked example in
 [`docs/example`](example/source/app.d) builds and runs against it, and CI
 runs it on Linux and Windows.
@@ -53,7 +59,7 @@ solver can inline like calls within one package. Add it as a dependency:
 
 ```json
 "dependencies": {
-    "solver": { "path": "../solver" }
+    "solver2": { "path": "../solver2" }
 }
 ```
 
@@ -62,12 +68,12 @@ dependency with a pinned commit. solver isn't on the dub registry.
 
 Requirements:
 
-- **LDC only.** `solver.ensemble` imports `ldc.simd`, so DMD and GDC can't
-  build any module that imports it: `solver.ensemble`, `solver.model`, or
+- **LDC only.** `solver2.ensemble` imports `ldc.simd`, so DMD and GDC can't
+  build any module that imports it: `solver2.ensemble`, `solver2.model`, or
   anything that imports those. solver is developed with LDC 1.42.0.
 - No other dependencies. solver uses Phobos and `ldc.simd` only.
 - solver has no `package.d`. Import the modules you need by name:
-  `import solver.problem; import solver.stage; import solver.archive;`
+  `import solver2.problem; import solver2.stage; import solver2.archive;`
   and so on.
 
 Build flags are your project's. solver adds none. pleaser builds with
@@ -259,12 +265,12 @@ template. This table lists only the members that the code reads.
 | Member | Read by | Purpose |
 |---|---|---|
 | `size_t descriptorCount() const`, `void descriptors(const ref Eval, double[] d) const` | Archive (required there: `hasDescriptors!P`) | Where an evaluation lands. The grid maps these values to a cell. Read only for feasible candidates. |
-| `alias Causes`, `Causes newCauses() const`, `void countCauses(ref Causes, const ref Eval) const` | Stage and archive (`hasCauses!P`, in `solver.stage`) | Counts why candidates broke their limits, for progress reports. `Causes` needs `opOpAssign!"+"`. |
+| `alias Causes`, `Causes newCauses() const`, `void countCauses(ref Causes, const ref Eval) const` | Stage and archive (`hasCauses!P`, in `solver2.stage`) | Counts why candidates broke their limits, for progress reports. `Causes` needs `opOpAssign!"+"`. |
 | `double screenPenalty(const(double)[] genes)` | Pre-screening in the stage and the archive | A known cost subtracted from a predicted objective (pleaser's processing cost, which needs no render). |
 | `string noFeasibleSeed() const` | Archive | A hint appended to `NoFeasibleSeed`'s message. |
 | `void adoptCauses(ref Causes)` | Archive, on resume | Lets the problem fix up resumed cause counts. |
 
-`solver.problem` also documents the surrogate members `featureCount`,
+`solver2.problem` also documents the surrogate members `featureCount`,
 `features`, `targetCount`, `targets` and `predicted` (`hasSurrogate!P`):
 with them a problem is its own learning spec for the learned model (see
 [A learned model](#a-learned-model)). And it documents `fingerprint` and
@@ -327,7 +333,7 @@ batch, so the dispatch cost is small next to an evaluation.
 ## A CMA-ES stage
 
 ```d
-import solver.stage;
+import solver2.stage;
 
 Beam p;
 Best!(Beam.Eval) best;                          // carried across stages
@@ -511,7 +517,7 @@ pleaser's character grid is an example.
 ### Running
 
 ```d
-import solver.archive;
+import solver2.archive;
 
 alias A = Archiving!(Beam, BinnedGrid);         // P, G, O = ArchiveOptions, N = 0, minScore = 0
 ArchiveOptions ao = {evals: 4000, emitters: 4, explorers: 2, lambda: 8, seed: 9};
@@ -824,7 +830,7 @@ archive saves them but doesn't read them.
 
 ## A learned model
 
-`solver.model.LearnedModel!L` trains a small neural-network ensemble on
+`solver2.model.LearnedModel!L` trains a small neural-network ensemble on
 every evaluation of a run, and predicts candidates before they are
 evaluated. It is both a `StageModel!(L.Eval)` and an
 `ArchiveSurrogate!(L.Eval)`, so you can pass it to `cmaStage` or to
@@ -964,7 +970,7 @@ does.
 
 The **fingerprint** is name/value pairs describing what the run was
 computed from, such as problem inputs, settings and versions. Check it on
-load with `solver.problem.fingerprintMismatch(saved, now)`. It returns
+load with `solver2.problem.fingerprintMismatch(saved, now)`. It returns
 null when every saved pair is in `now` with the same value, in any order,
 or the first that isn't as a message. Pairs only in `now` are new and
 accepted, so a project can add a setting to its fingerprint without
@@ -981,7 +987,7 @@ A file is a header, then one value:
   length and its bytes. The reader matches fields **by name**, so their
   order doesn't matter, and the lengths let it step over a field.
 - **A static array** or **a slice**: its length, then its elements.
-- **A scalar**: its bytes, through `solver.bytes.Bytes` (native layout, so
+- **A scalar**: its bytes, through `solver2.bytes.Bytes` (native layout, so
   little-endian on little-endian machines, and a `size_t` field is as wide
   as the build's). Lengths are `ulong`.
 
@@ -1000,7 +1006,7 @@ example checks at compile time that the two are the same text.
 <!-- checkpoint.d -->
 ```d
 /// A checkpoint file format to copy into a project and adapt (the developer
-/// manual's "Stopping, saving and resuming → To a file"). solver gives a
+/// manual's "Stopping, saving and resuming → To a file"). solver2 gives a
 /// run's state as plain data (RunState, the archive, the causes) and the
 /// model's as bytes, and leaves the file format to the caller.
 ///
@@ -1012,13 +1018,13 @@ example checks at compile time that the two are the same text.
 /// refused (a newer file isn't half read) unless it is listed as retired.
 /// A static array is its elements, a slice its length then its elements, a
 /// scalar its bytes; lengths are ulong. Everything goes through
-/// solver.bytes, so the bytes are little-endian on little-endian machines.
+/// solver2.bytes, so the bytes are little-endian on little-endian machines.
 module checkpoint;
 
 import std.exception : enforce;
 import std.traits : isPointer, isAssociativeArray, isDelegate, isFunctionPointer;
 
-import solver.bytes : Bytes;
+import solver2.bytes : Bytes;
 
 /// Appends the header: `magic`, then `version_`.
 void writeHeader(ref Bytes o, string magic, uint version_)
@@ -1196,7 +1202,7 @@ everything a checkpoint holds, so every part of the file is a named field.
 /// The checkpoint file's magic string and format version. Bump the
 /// version when a saved field changes meaning or type, and teach load to
 /// read the older one; adding a field needs no bump (see checkpoint.d).
-enum string MAGIC = "solver-example checkpoint";
+enum string MAGIC = "solver2-example checkpoint";
 enum uint FORMAT = 1;
 
 /// What a checkpoint holds: the problem's fingerprint, the run's state, its
@@ -1324,7 +1330,7 @@ add them to `Saved` as fields.
 
 ## Lower-level pieces
 
-- **`solver.cmaes.CmaEs`**: deterministic CMA-ES for minimisation.
+- **`solver2.cmaes.CmaEs`**: deterministic CMA-ES for minimisation.
   - `CmaEs(x0, sigma0, lambda, seed)`, where `lambda = 0` gives
     4 + ⌊3 ln n⌋.
   - `ask()` returns `lambda` rows, valid until the next `ask`.
@@ -1334,13 +1340,13 @@ add them to `Saved` as fields.
   - Accessors: `stepSize`, `currentMean`, `populationSize`, `generation`,
     `bestFitness`, `bestPoint`.
   - `jacobiEigen` is its eigensolver.
-- **`solver.rng.SplitMix64`**: the only RNG solver uses, and the one your
+- **`solver2.rng.SplitMix64`**: the only RNG solver uses, and the one your
   problem should use for any seeded noise (see
   [Determinism](#determinism)).
   - `next()`, `uniform01()` (53 bits), `bipolar()`.
   - Its state is the public `ulong state`.
   - It is the same generator as pleaser's `pleaser.rng`, bit for bit.
-- **`solver.detmath`**: `log2` and `exp2` that give the same bits on every
+- **`solver2.detmath`**: `log2` and `exp2` that give the same bits on every
   platform, for a problem whose results must match across platforms.
   - `log2d(x)` for finite `x > 0` (no denormals or zero: floor the input
     first), `exp2d(y)` for `y` in [−1000, 1000], exactly 1 at `y = 0`.
@@ -1356,7 +1362,7 @@ add them to `Saved` as fields.
     [Determinism](#determinism), item 5).
   - pleaser and its plugins keep their own identical copy,
     `pleaser.detmath`.
-- **`solver.ensemble.Ensemble`**: the network ensemble under
+- **`solver2.ensemble.Ensemble`**: the network ensemble under
   `LearnedModel`, usable on its own.
   - `new Ensemble(inputs, outputs, EnsembleOptions)`
   - `scaleInputs(mean, sd)`
@@ -1364,14 +1370,14 @@ add them to `Saved` as fields.
   - `predict(x, mean, spread)`
   - `save()` and `restore(bytes)`
   - `targetStats` and `Stats`
-- **`solver.bytes.Bytes`**: little-endian put and get of scalars and
+- **`solver2.bytes.Bytes`**: little-endian put and get of scalars and
   arrays, with an array's length first. `getArray!T(expect)` checks the
   length, and `done()` is true when everything has been read. It writes
   native layout with no endianness conversion, so the bytes are
   little-endian only on little-endian machines.
-- **`solver.stage.pickRendered`, `stalled`**: the pre-screening pick and
+- **`solver2.stage.pickRendered`, `stalled`**: the pre-screening pick and
   the stall test, exposed for custom loops.
-- **`solver.archive`'s smaller helpers**:
+- **`solver2.archive`'s smaller helpers**:
   - `emitterSeed`, `explorerGain`, `predictedFitness`
   - `nearlyAllInfeasible`, `explorerRestart`, `improverRestart` (each
     takes an `ArchiveRules` last, the defaults when left out)
@@ -1399,7 +1405,7 @@ Your problem must keep them too:
    the order of the other candidates in it, and the number of threads. If
    you parallelise, compute each candidate independently and write it to
    its own slot.
-2. Draw any seeded noise from `solver.rng.SplitMix64`, seeded from the
+2. Draw any seeded noise from `solver2.rng.SplitMix64`, seeded from the
    genes or your own fixed seed. Don't use `std.random`, whose algorithms
    aren't guaranteed to stay the same across Phobos versions.
 3. Keep floating-point reductions in a fixed order. `std.algorithm.sum`
@@ -1424,7 +1430,7 @@ Your problem must keep them too:
    - a saved run resumes bit for bit on the platform it was saved on. On
      another it resumes, but goes on as that platform's run would.
 
-   `solver.detmath`'s `log2d`/`exp2d` (and their 4-lane forms) give the
+   `solver2.detmath`'s `log2d`/`exp2d` (and their 4-lane forms) give the
    same bits everywhere. Use them where a problem's own result must not
    depend on the platform, say a value it stores or compares against a
    fixed reference; they don't make a whole run platform-independent. With
@@ -1481,7 +1487,7 @@ one says what it costs you and how to work around it today.
    use the C maths library, whose last bits differ between glibc and the
    MSVC runtime, so the same run takes different paths on Linux and
    Windows. This is accepted, not planned to change: keep goldens per
-   platform (see [Determinism](#determinism)). `solver.detmath` has
+   platform (see [Determinism](#determinism)). `solver2.detmath` has
    platform-identical `log2` and `exp2` for a problem's own use.
 5. **Evaluation log, survey and model test tools stay in pleaser.**
    pleaser's `evals.bin` log, random survey and offline surrogate tests
@@ -1494,15 +1500,15 @@ one says what it costs you and how to work around it today.
 
 | Module | What it holds |
 |---|---|
-| `solver.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `DynamicProblem`, `fingerprintMismatch` |
-| `solver.stage` | `StageModel`, `StageOptions`, `Best`, `hasCauses`, `StageGeneration`, `StageEnd`, `StageRun`, `cmaStage`, `pickRendered`, `stalled` |
-| `solver.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
-| `solver.model` | `isLearning`, `LearnedModel`, `ColumnStats`, `columnStats` |
-| `solver.cmaes` | `CmaEs` (with `State`), `jacobiEigen` |
-| `solver.ensemble` | `EnsembleOptions`, `Ensemble`, `Stats`, `targetStats` |
-| `solver.bytes` | `Bytes` |
-| `solver.rng` | `SplitMix64` |
-| `solver.detmath` | `log2d`, `exp2d`, `log2v`, `exp2v`, `select`, `V`, `VL` |
+| `solver2.problem` | `Tier`, `Breach`, `ConstraintSpec`, `breachOf`, `value`, `Ranking`, `Scoring`, `clamp01`, `boundExcess`, `Scale`, `GeneSpec`, `Predicted`, `isProblem`, `hasDescriptors`, `hasSurrogate`, `isSaveable`, `valueOf`, `fitnessOf`, `isGrid`, `Axis`, `BinnedGrid`, `Outcome`, `DynamicProblem`, `fingerprintMismatch` |
+| `solver2.stage` | `StageModel`, `StageOptions`, `Best`, `hasCauses`, `StageGeneration`, `StageEnd`, `StageRun`, `cmaStage`, `pickRendered`, `stalled` |
+| `solver2.archive` | `Elite`, `Offer`, `Archive`, `copyOf`, `selectDiverse`, `ArchiveOptions`, `ArchiveSurrogate`, `GuideStats`, `ScreenStats`, `RestartReason`, `reasonText`, `NoCauses`, `CausesOf`, `ArchiveGeneration`, `Emitter`, `ArchiveRun`, `RunState`, `runState`, `restoreRun`, `ArchiveBatch`, `NoFeasibleSeed`, `Archiving` (`runArchive`), `ArchiveRules` (and its defaults' former names, `RESTART_*`, `EXPLORE_*`, `AIM_SAMPLES`), the restart helpers |
+| `solver2.model` | `isLearning`, `LearnedModel`, `ColumnStats`, `columnStats` |
+| `solver2.cmaes` | `CmaEs` (with `State`), `jacobiEigen` |
+| `solver2.ensemble` | `EnsembleOptions`, `Ensemble`, `Stats`, `targetStats` |
+| `solver2.bytes` | `Bytes` |
+| `solver2.rng` | `SplitMix64` |
+| `solver2.detmath` | `log2d`, `exp2d`, `log2v`, `exp2v`, `select`, `V`, `VL` |
 
 ---
 

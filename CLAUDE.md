@@ -1,51 +1,56 @@
-# solver
+# solver2
 
-Deterministic black-box optimisation core extracted from pleaser: CMA-ES
-stages and a quality-diversity archive over a problem interface. See
-README.md for the layout and docs/manual.md for the developer manual.
+The next version of solver (`../solver`), the deterministic black-box
+optimisation core extracted from pleaser: CMA-ES stages and a
+quality-diversity archive over a problem interface. solver2 adds a problem
+as a class that need not be known at compile time, and a C interface and
+Python module over it. It started as solver's code at commit `ae68dbb`,
+with the package and modules renamed to `solver2`.
+
+**Read `docs/work-plan.md` before starting**: it is the plan and the
+hand-over (design, steps, where the work stands, open questions for Dev).
+Update it in the same change when a step is done, a decision is made or
+the plan changes. See README.md for a summary and docs/manual.md for the
+developer manual, which is still solver's until the plan's step 7.
 
 ## Working here
 
+- **Never change `../solver`, `../pleaser` or `../satisfaction` from
+  here.** The projects that use solver stay on it, untouched; that is why
+  solver2 is a separate project. To build or run solver for a comparison,
+  export it elsewhere (`git -C ../solver archive <commit> | tar -x -C
+  <dir>`) rather than building in its checkout.
 - LDC only, developed with LDC 1.42.0. In cloud sessions the SessionStart
-  hook installs it. solver is a dub source library with no dependencies.
-- Before pushing: `dub test --compiler=ldc2` in solver, and in
+  hook installs it. solver2 is a dub source library with no dependencies.
+- Before every commit: `dub test --compiler=ldc2` in solver2, and in
   `docs/example` both `dub test --compiler=ldc2` and
   `dub run --compiler=ldc2 --build=release` (the example checks a resumed
-  run against the uninterrupted one bit for bit). CI runs the same on
-  Linux and Windows for every pull request; a PR is done when both are
-  green.
-- pleaser (`../pleaser`) depends on solver by path and is its main user.
-  A change to solver code pleaser imports also needs pleaser's checks
-  (`pleaser/CLAUDE.md`), a golden run (the same `pleaser optimize` run on
-  `main` and on the branch, on one platform, byte-comparing
-  `elites.state`, `progress.csv` and `best.txt`: identical) and timings
-  within noise, all reported in the PR. Open the session on pleaser, or
-  run its SessionStart hook, to build it. While pleaser builds against a
-  solver branch, keep `../solver` on that branch; use `git worktree` for
-  other solver work in the meantime.
-- Never change satisfaction (`../satisfaction`, pleaser's analyser) from
-  here, and don't switch pleaser's own `pleaser.detmath` or `pleaser.rng`
-  to solver's copies.
+  run against the uninterrupted one bit for bit). The work plan adds the
+  binding's and the Python tests as those steps land.
+- The compile-time route must keep solver's bits: the worked example
+  prints the same output as solver's at `ae68dbb` on one platform (but
+  for a change the plan lists under "Changes a migrating project will
+  meet"). Check it when a change touches the searches.
+- Commit only when Dev asks. The repository has no remote and no CI yet
+  (`.github/workflows/ci.yml` is solver's, waiting for one).
 - `docs/example/source/checkpoint.d` is printed whole in the manual (To a
   file) as the checkpoint template. Change both together: a
   `static assert` in `docs/example/source/app.d` fails the build when
   they differ.
-- The manual's Gaps and caveats list what solver doesn't do. Keep it, and
-  its date, true when a change closes or opens one.
-- `docs/next-session.md` is the hand-over prompt for the next session;
-  update it when the state or the plan changes.
+- The manual's Gaps and caveats list what the library doesn't do. Keep
+  it, and its date, true when a change closes or opens one.
 
 ## Determinism
 
 - Results are bit-identical on any thread count and CPU of one platform.
-  Seeded noise only through `solver.rng.SplitMix64`, never `std.random`.
+  Seeded noise only through `solver2.rng.SplitMix64`, never `std.random`.
 - Runs differ between platforms, and that is accepted: LDC lowers `exp`,
   `log`, `pow`, `sin`, `cos` to the C maths library, whose last bits differ
   between glibc and the MSVC runtime. Keep golden runs and reference
   outputs per platform. A test that needs something to happen during a run
   (an explorer aimed, a restart) must force it, so it happens on Linux and
   Windows alike.
-- `solver.detmath` gives the same bits everywhere; its unittests hold it
+- `solver2.detmath` gives the same bits everywhere; its unittests hold it
   to reference bit patterns. Don't add flags that change floating-point
   results (`-fp-contract=fast`, `@fastmath`).
 

@@ -1,5 +1,5 @@
 /// A checkpoint file format to copy into a project and adapt (the developer
-/// manual's "Stopping, saving and resuming → To a file"). solver gives a
+/// manual's "Stopping, saving and resuming → To a file"). solver2 gives a
 /// run's state as plain data (RunState, the archive, the causes) and the
 /// model's as bytes, and leaves the file format to the caller.
 ///
@@ -11,13 +11,13 @@
 /// refused (a newer file isn't half read) unless it is listed as retired.
 /// A static array is its elements, a slice its length then its elements, a
 /// scalar its bytes; lengths are ulong. Everything goes through
-/// solver.bytes, so the bytes are little-endian on little-endian machines.
+/// solver2.bytes, so the bytes are little-endian on little-endian machines.
 module checkpoint;
 
 import std.exception : enforce;
 import std.traits : isPointer, isAssociativeArray, isDelegate, isFunctionPointer;
 
-import solver.bytes : Bytes;
+import solver2.bytes : Bytes;
 
 /// Appends the header: `magic`, then `version_`.
 void writeHeader(ref Bytes o, string magic, uint version_)

@@ -1,4 +1,6 @@
 .dub/
-/solver-example
-/solver-example-test-*
+/solver2-example
+/solver2-example-test-*
 dub.selections.json
+/solver2-example.exe
+*.pdb

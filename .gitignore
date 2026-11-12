@@ -1,5 +1,5 @@
 .dub/
-/solver-test-*
+/solver2-test-*
 *.a
 *.lib
 *.o

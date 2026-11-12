@@ -1,9 +1,9 @@
 {
-    "name": "solver-example",
+    "name": "solver2-example",
     "description": "The developer manual's worked example: a constrained problem through a CMA-ES stage, then the archive with a learned model, saved and resumed",
     "targetType": "executable",
     "dependencies": {
-        "solver": { "path": "../.." }
+        "solver2": { "path": "../.." }
     },
     "stringImportPaths": [".."]
 }

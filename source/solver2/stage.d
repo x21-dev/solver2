@@ -11,16 +11,16 @@
 /// A stage can stop after any generation and go on later (`StageRun`): it
 /// then ends as the stage that never stopped, and a finished stage resumed
 /// with a larger budget as the stage given that budget from the start.
-module solver.stage;
+module solver2.stage;
 
 import std.exception : enforce;
 
-import solver.cmaes : CmaEs;
-import solver.problem;
-import solver.rng : SplitMix64;
+import solver2.cmaes : CmaEs;
+import solver2.problem;
+import solver2.rng : SplitMix64;
 
 /// What a pre-screened stage asks of its model: learn from evaluations,
-/// train, predict. solver.model's LearnedModel is one.
+/// train, predict. solver2.model's LearnedModel is one.
 interface StageModel(E)
 {
     /// Adds evaluated candidates (genes in [0, 1]) to the training data.

@@ -1,37 +1,37 @@
-# solver
+# solver2
 
-The optimisation core extracted from [pleaser](https://github.com/x21-dev/pleaser):
-deterministic CMA-ES stages and a quality-diversity archive over a problem
-interface. So far: the interface (`source/solver/problem.d`), CMA-ES
-(`cmaes.d`) and its RNG (`rng.d`), moved from pleaser unchanged, and the
-CMA-ES stage over any problem (`stage.d`: stall stop, optional surrogate
-pre-screening through a `StageModel`, a per-generation callback, and stages
-that stop and resume bit for bit, their state as plain data in `StageRun`). Also the
-surrogate ensemble (`ensemble.d`: small ReLU networks trained by Adam,
-deterministic on any thread count) and `bytes.d`, the little-endian
-encoding of saved states. And the archive (`archive.d`: CMA-MAE over a
-problem's descriptors on a grid, with explorers that head for cells not
-discovered yet, model-guided and
-pre-screened emitters, focus, and runs that stop and resume bit for bit,
-their state between iterations as plain data in `RunState`; its ranking
-and its restart and explorer rules, `ArchiveRules`, are options). Also the learned
-model (`model.d`: the ensemble trained on a run's evaluations, for the
-pre-screened stages and the model-guided emitters, over a problem's
-surrogate members). And `detmath.d`: `log2` and `exp2` (scalar and 4-lane) in plain IEEE
-arithmetic, the same bits on every platform, copied from pleaser's
-`pleaser.detmath`. A problem's seeded noise should come from `rng.d`'s
-`SplitMix64`.
+The next version of [solver](https://github.com/x21-dev/solver), the
+deterministic black-box optimiser extracted from
+[pleaser](https://github.com/x21-dev/pleaser): CMA-ES stages and a
+quality-diversity archive (CMA-MAE) over a problem interface, with a
+learned surrogate model.
+
+solver2 is being built to add two things:
+
+- a problem as a class that need not be known at compile time;
+- a C interface and a Python module over it, so a problem written in
+  Python runs through the D searches.
+
+[`docs/work-plan.md`](docs/work-plan.md) has the design, the steps and
+where the work stands. So far solver2 is solver's code at commit
+`ae68dbb`, with the package and its modules renamed: `solver2.problem`,
+`solver2.stage`, `solver2.archive`, `solver2.model`, `solver2.ensemble`,
+`solver2.cmaes`, `solver2.bytes`, `solver2.rng`, `solver2.detmath`.
+
+solver itself stays as it is, and the projects that use it need not
+change. The manual will say how to move a project to solver2.
 
 Runs are bit-identical on any thread count of one platform, not across
 platforms (the C maths library differs), so keep golden runs per
 platform; see the manual's Determinism section.
 
-solver is a source library: a dependent compiles its modules with its own,
-so calls into it inline as calls within one package do.
+solver2 is a source library: a dependent compiles its modules with its
+own, so calls into it inline as calls within one package do.
 
 ```
 dub test --compiler=ldc2
 ```
 
-To use solver in another project, see the [developer manual](docs/manual.md)
-and its worked example in `docs/example`.
+To use it, see the [developer manual](docs/manual.md) and its worked
+example in `docs/example`. The manual is still solver's, with the module
+names changed.

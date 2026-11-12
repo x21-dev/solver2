@@ -14,7 +14,7 @@
 /// keeps the best candidate ever found in each cell (the paper's result
 /// archive).
 ///
-/// solver adds an aim CMA-MAE reaches only indirectly (through its
+/// solver2 adds an aim CMA-MAE reaches only indirectly (through its
 /// thresholds and, once they have caught up, density descent): cells no
 /// candidate has found yet. Explorers (the last emitters) head for empty
 /// cells, down the grid's distance, and take a new target when they reach
@@ -38,14 +38,14 @@
 /// A run is plain data between iterations (`ArchiveRun`): saved and
 /// restored field by field, it goes on as the run that never stopped
 /// (`runArchive`'s `resume`).
-module solver.archive;
+module solver2.archive;
 
 import std.exception : enforce;
 
-import solver.cmaes : CmaEs;
-import solver.problem;
-import solver.rng : SplitMix64;
-import solver.stage : hasCauses, pickRendered;
+import solver2.cmaes : CmaEs;
+import solver2.problem;
+import solver2.rng : SplitMix64;
+import solver2.stage : hasCauses, pickRendered;
 
 /// When the archive restarts an emitter and when an explorer gives its
 /// target up (`ArchiveOptions.rules`; the manual's "Restart and explorer

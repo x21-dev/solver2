@@ -1,6 +1,6 @@
 /// Little-endian bytes of values and arrays, for saved states: the
 /// ensemble's and, in pleaser, the archive model's and checkpoints'.
-module solver.bytes;
+module solver2.bytes;
 
 /// Little-endian bytes of values and arrays (an array with its length
 /// first unless given), for the saved states of the ensemble and the archive's model.

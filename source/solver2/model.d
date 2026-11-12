@@ -24,7 +24,7 @@
 /// Deterministic: the features and predictions of a batch are computed one
 /// candidate per task, independently, and the ensemble trains as its own
 /// documentation says; so a seed gives the same model on any thread count.
-module solver.model;
+module solver2.model;
 
 import core.time : MonoTime;
 import std.exception : enforce;
@@ -33,12 +33,12 @@ import std.math : isFinite, sqrt;
 import std.parallelism : TaskPool;
 import std.range : iota;
 
-import solver.archive : ArchiveSurrogate;
-import solver.bytes : Bytes;
-import solver.ensemble : Ensemble, EnsembleOptions;
-import solver.problem : Breach, clamp01, Predicted;
-import solver.rng : SplitMix64;
-import solver.stage : StageModel;
+import solver2.archive : ArchiveSurrogate;
+import solver2.bytes : Bytes;
+import solver2.ensemble : Ensemble, EnsembleOptions;
+import solver2.problem : Breach, clamp01, Predicted;
+import solver2.rng : SplitMix64;
+import solver2.stage : StageModel;
 
 /// Whether `L` is a learning spec (see the module's documentation).
 enum bool isLearning(L) = is(L.Eval) && is(typeof((const ref L l, const(double)[] x, double[] f,
@@ -366,7 +366,7 @@ unittest
 unittest
 {
     // The ensemble's settings but the seed come from the options given.
-    import solver.ensemble : EnsembleOptions;
+    import solver2.ensemble : EnsembleOptions;
     EnsembleOptions small = {members: 2, hidden: 8, seed: 99};
     auto a = new LearnedModel!Square(Square(), 1, null, small), b = new LearnedModel!Square(Square(), 1, null);
     auto c = new LearnedModel!Square(Square(), 1, null, EnsembleOptions.init);

@@ -1,7 +1,7 @@
 /// A small counter-free PRNG with a fixed algorithm, so seeded noise is
 /// bit-identical on every platform and compiler (std.random's defaults are
 /// not guaranteed to stay the same across Phobos versions).
-module solver.rng;
+module solver2.rng;
 
 /// SplitMix64 (Steele, Lea, Flood 2014).
 struct SplitMix64

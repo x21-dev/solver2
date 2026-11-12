@@ -1,6 +1,6 @@
 {
-    "name": "solver",
-    "description": "Deterministic black-box optimisation core extracted from pleaser: CMA-ES stages and a quality-diversity archive over a problem interface",
+    "name": "solver2",
+    "description": "The next version of solver, the deterministic black-box optimisation core extracted from pleaser: CMA-ES stages and a quality-diversity archive over a problem interface, with class problems and a Python interface to come",
     "authors": [
         "x21-dev"
     ],

@@ -8,7 +8,7 @@
 /// exactly the same operations, so every lane equals the scalar result bit
 /// for bit, and a loop can run vectors with a scalar tail. Accuracy is about
 /// 1e-15 relative, far below anything audible.
-module solver.detmath;
+module solver2.detmath;
 
 import std.traits : Unqual;
 

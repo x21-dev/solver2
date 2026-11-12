@@ -7,16 +7,16 @@
 /// to trust as one.
 ///
 /// Deterministic: the members train independently, one task each, every
-/// sum in a fixed order, their randomness from solver.rng; so the same
+/// sum in a fixed order, their randomness from solver2.rng; so the same
 /// calls give the same bits on any thread count. Moved from pleaser's
 /// surrogate.d unchanged.
-module solver.ensemble;
+module solver2.ensemble;
 
 import std.math : sqrt;
 import std.parallelism : TaskPool;
 
-import solver.bytes : Bytes;
-import solver.rng : SplitMix64;
+import solver2.bytes : Bytes;
+import solver2.rng : SplitMix64;
 
 struct EnsembleOptions
 {
