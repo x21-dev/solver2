@@ -5,9 +5,11 @@
 > (`import solver2.problem;`), but for what solver2 has changed so far:
 > [Dynamic problems](#dynamic-problems), the archive's `minScore` as a
 > value known at run time (under [Running](#running)), and
-> [Bounds checks](#bounds-checks). The C interface isn't in this manual
-> yet: [`bindings/c/README.md`](../bindings/c/README.md) and its header
-> describe it.
+> [Bounds checks](#bounds-checks). The C interface and the Python module
+> aren't in this manual yet: [`bindings/c/README.md`](../bindings/c/README.md)
+> with its header, and [`bindings/python/README.md`](../bindings/python/README.md),
+> describe them. [`docs/example-class`](example-class/source/app.d) is the
+> worked example on the class route.
 > Where it says solver, read solver2. Step 7
 > of the [work plan](work-plan.md) brings it to solver2's state and adds
 > the sections on Python and on migrating from solver.

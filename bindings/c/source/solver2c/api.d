@@ -488,6 +488,19 @@ export int solver2_problem_start(solver2_problem* problem, double* genes) nothro
     });
 }
 
+export int solver2_problem_physical(solver2_problem* problem, size_t rows, const(double)* genes, double* values) nothrow
+{
+    return guarded({
+        need(rows == 0 || genes !is null, "genes");
+        need(rows == 0 || values !is null, "values");
+        const specs = problemOf(problem).genes;
+        immutable size_t n = specs.length;
+        foreach (k; 0 .. rows)
+            foreach (i, ref s; specs)
+                values[k * n + i] = s.toPhysical(genes[k * n + i]);
+    });
+}
+
 export int solver2_problem_cell_code(solver2_problem* problem, size_t cell, char* buffer, size_t capacity) nothrow
 {
     return guarded({

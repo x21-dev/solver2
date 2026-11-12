@@ -139,5 +139,5 @@ unittest
             else static if (is(__traits(getMember, h, name) == struct))
                 ++structs;
         }
-    assert(functions == 37 && structs == 18);
+    assert(functions == 38 && structs == 18);
 }

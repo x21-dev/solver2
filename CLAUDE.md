@@ -29,12 +29,20 @@ developer manual, which is still solver's until the plan's step 7.
   in `bindings/c`, `dub test --compiler=ldc2` and
   `dub build --compiler=ldc2 --build=release`, and in `bindings/c/test`
   `dub run --compiler=ldc2` (the driver loads the library just built and
-  must end with `all passed`). The work plan adds the Python tests when
-  that step lands.
-- The C interface's header (`bindings/c/include/solver2.h`) and its D
-  mirror (`source/solver2c/c.d`, `api.d`) change together: the binding's
-  tests read the header with ImportC and fail to build when they differ.
-  A change of a struct or a function there is a change of `SOLVER2_ABI`.
+  must end with `all passed`). Then Python, in `bindings/python`:
+  `python -m unittest discover -s tests` (it loads the same library, and
+  builds and runs `docs/example-class` to compare the Python example
+  with it).
+- `docs/example-class/source/app.d` and
+  `bindings/python/examples/beam.py` are one program twice, in D and in
+  Python, and must print the same lines. Change them together.
+- The C interface's header (`bindings/c/include/solver2.h`), its D
+  mirror (`source/solver2c/c.d`, `api.d`) and its Python one
+  (`bindings/python/solver2/_c.py`) change together: the binding's tests
+  read the header with ImportC and fail to build when the D side
+  differs, and the Python tests parse it and fail when `_c.py` does. A
+  change of a struct or a function there is a change of `SOLVER2_ABI`,
+  in all three.
 - In the binding, a thread unknown to the D runtime is attached once, on
   its first call, and detached by a hook when it ends. Don't attach and
   detach per call: with this druntime that corrupts memory (the work

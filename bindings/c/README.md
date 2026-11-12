@@ -3,8 +3,8 @@
 solver2's searches as a shared library (`solver2.dll`, `libsolver2.so`)
 that a program in another language loads: a CMA-ES stage and the archive
 over a problem whose evaluation is the caller's function, with a learned
-model, and a run saved and resumed as bytes. The Python module is built
-on it.
+model, and a run saved and resumed as bytes. The Python module
+([`../python`](../python/README.md)) is built on it.
 
 [`include/solver2.h`](include/solver2.h) is the interface and its
 documentation: read its opening comment for the rules (start the library

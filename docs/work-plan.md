@@ -16,17 +16,18 @@ Written 2026-11-12.
 | 2. The class, completed | done 2026-11-12 |
 | 3. Entry points and run-time `minScore` | done 2026-11-12 |
 | 4. The C interface | done on Windows 2026-11-12; Linux owed |
-| 5. The Python module | next |
+| 5. The Python module | done on Windows 2026-11-12; Linux owed |
 | 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
-| 7. The manual | |
+| 7. The manual | next |
 
 solver2 is solver's code with the package and modules renamed, plus the
 completed `DynamicProblem` (step 2), the archive's `minScore` as a value
 known at run time, the searches over the class as plain functions in
-`solver2.dynamic` (step 3), and their C interface as a shared library in
-`bindings/c` (step 4). The searches otherwise are unchanged: the worked
-example still prints what solver's does, and its final archive has the
-same bits.
+`solver2.dynamic` (step 3), their C interface as a shared library in
+`bindings/c` (step 4), and the Python module over it in
+`bindings/python` (step 5). The searches otherwise are unchanged: the
+worked example still prints what solver's does, and its final archive
+has the same bits.
 
 ## What solver2 is
 
@@ -524,8 +525,9 @@ waits for a Linux machine (step 6).
 **What is there** (`bindings/c/README.md` has the commands and the file
 list):
 
-- `include/solver2.h`, by hand: 37 functions, 14 structs with fields, 4
-  handle types. Its opening comment is the contract.
+- `include/solver2.h`, by hand: 37 functions (38 since step 5), 14
+  structs with fields, 4 handle types. Its opening comment is the
+  contract.
 - The library, `solver2.dll` / `libsolver2.so`, in two configurations:
   `library` (the D runtime linked in, bounds checks on) and `unchecked`
   (the same without the checks). Both write the same file;
@@ -674,11 +676,117 @@ Six runs of it, Python 3.15.0.
 - A Python `evaluate` gets flat arrays: numpy views with
   `np.ctypeslib.as_array`, nothing copied (the spike).
 
-### 5. The Python module
+### 5. The Python module (done on Windows 2026-11-12)
 
-The module, its tests, and a Python version of the worked example
-(`Beam`), whose result equals the D example's bit for bit on one
-platform. Done when the tests pass against the library built in step 4.
+`bindings/python`: the module, its tests, and the worked example in
+Python, which prints what its D counterpart prints, bit patterns
+included. Its Linux run waits for a Linux machine (step 6).
+
+**What is there** (`bindings/python/README.md` has the setting up and
+what a user needs to know):
+
+- `solver2/_c.py`: the header as `ctypes` declarations, by hand, and the
+  loading of the library: the file named by `SOLVER2_LIBRARY`, else
+  beside the module, else `bindings/c` of the checkout (open question 3:
+  a plain folder, as recommended).
+- `solver2/__init__.py`: `Problem` (a class with its description as
+  class attributes and an `evaluate(genes, feasible_only)` that returns
+  the objectives, the violations and the descriptors as arrays), `Model`,
+  `Stage` and `Archive` (`run`, `result`, `best`, `elites`, `thresholds`,
+  `causes`, `diverse`, `save`, `load`), and `Error`. Options are
+  keywords over the library's defaults (`lambda_` for `lambda`).
+- An exception raised in `evaluate` or in a report is kept, the library
+  is told the callback failed, and `run` raises the exception itself, a
+  `KeyboardInterrupt` included. The run can then be gone on with (step
+  4's roll-back).
+- `examples/beam.py`, and `docs/example-class`, its D counterpart.
+- The tests, with the standard library's `unittest` (pytest isn't
+  installed here, and the module then needs nothing but numpy): 30 of
+  them, in about 30 s.
+
+**The plan's goal had to change: the Python example equals a D example
+on the class route, not `docs/example`.** `docs/example`'s `Beam` is a
+compile-time problem with a learning spec of its own (it learns the
+objective, and one breach for the hard and the terminal tier). A problem
+behind the C interface has the class's default learning spec (the value,
+a breach per tier), by design: the model's threads never call back. The
+two models differ, so no Python `Beam` can give `docs/example`'s bits
+once a model is in the run, and every part of the example has one. So:
+
+- `docs/example-class` is the worked example as a `DynamicProblem`,
+  through `runStage` and `runArchive`: the same problem, flow and
+  options, the class's learning spec, and `minScore` −50, below the
+  problem's lowest value, so that `checkProblem` passes (open question 8
+  doesn't arise for it). It is a second worked example in its own
+  right, for the manual's class route (step 7).
+- `examples/beam.py` is that program in Python. The two print the same
+  16 lines; two of them are bit patterns: the stage's best value and a
+  hash of its genes, and hashes of every threshold, every elite's value
+  and genes, and the QD score. `tests/test_example.py` builds the D one
+  with dub and compares.
+- `docs/example` is untouched, and still prints what solver's does.
+
+**Added to the C interface: `solver2_problem_physical`** (`SOLVER2_ABI`
+is 2; 38 functions). It gives genes as physical values by the library's
+own `GeneSpec.toPhysical`. The Python example needs it for its bits: the
+rate's log scale goes through `exp` and `log`, the library's are the C
+library LDC links, and numpy has its own, which round otherwise. It is
+also what a Python problem wants anyway, instead of writing the clamping
+and the scales again. It may be called from inside the evaluation.
+
+**Also found**
+
+- dub doesn't see that the driver and the binding's tests depend on the
+  header, which they reach through a `#include`: after the header
+  changed, `dub run` ran the old driver, whose check of the interface
+  version then failed (as it should). Both now list `include` as a
+  string import path, which dub tracks.
+- The worked example takes 43 s, the original too: nearly all of it is
+  its model training on one thread (5 networks of 64 units, trained
+  before each of about 340 generations and iterations, on up to 4000
+  rows). The two new
+  examples give their models 4 threads, which changes no bit (checked:
+  the same output as on none): 8 s in D, 13 s in Python.
+- What Python costs: about 26 µs a batch when `evaluate` computes
+  nothing, and 55 µs with a numpy evaluation of 8 candidates. In the
+  example, 12.5 s against the D program's 7.6 s: 1.7 s of the
+  difference is the bounds checks (10.8 s with the `unchecked` library)
+  and the rest mostly the model saved after every iteration for the
+  roll-back. If that matters, a model could be rolled back by forgetting
+  the rows it learned since, which needs a way into `LearnedModel`.
+- `ctypes` wants a null function pointer, not `None`, for an absent
+  callback (`ctypes.cast(None, kind)`).
+
+**The tests** (`python -m unittest discover -s tests`, in
+`bindings/python`)
+
+- `test_conformance.py` reads `solver2.h` with a small parser and holds
+  `_c.py` to it: every struct's fields and types in order, every
+  function's and callback's result and parameters, every constant, in
+  both directions. A wrong field and a wrong parameter planted in
+  `_c.py` each failed it.
+- `test_solver2.py`: a problem's description and what is refused of it;
+  `physical`; `check`; a stage and an archive, with and without a model,
+  the same on any number of the model's threads; stopped, saved, closed,
+  loaded and resumed to the uninterrupted run's bytes; an exception in
+  `evaluate` at several batches and in a report, raised as itself, and
+  the run gone on with to the same bytes; what `evaluate` returns
+  checked; a load's refusals; seven Python threads, four at once.
+- `test_example.py`, above.
+
+Checked on Windows with LDC 1.42.0 and Python 3.15.0 (numpy 2.5.4): the
+core's tests (10 modules), the example's (11) and its run, whose output
+is still solver's; the binding's tests (13) and the driver; the Python
+tests (30).
+
+**Not done**
+
+- Linux, as for step 4.
+- A wheel, or any packaging beyond the folder (open question 3).
+- Older Python versions: only 3.15 was run. The module uses nothing
+  newer than `namedtuple` defaults (3.7).
+- The interface's omissions are the module's too (step 4, "Not done, or
+  not exposed").
 
 ### 6. CI
 
@@ -696,10 +804,13 @@ the example's tests and the example. To add:
   through the exported functions only (it needs the library built
   first, and a C compiler for ImportC's preprocessor, which both runners
   have).
-- **Python**: `actions/setup-python`, then numpy and the test runner with
-  pip, then the Python tests against the library just built.
-- **The same bits through Python**: the Python worked example's result
-  compared with the D example's, within one job (so on one platform).
+- **Python**: `actions/setup-python`, then numpy with pip (the tests use
+  the standard library's `unittest`), then in `bindings/python`
+  `python -m unittest discover -s tests`, against the library just
+  built.
+- **The same bits through Python**: `tests/test_example.py` does it,
+  within the job (so on one platform): it builds `docs/example-class`
+  with dub and compares what `examples/beam.py` prints with it.
 - **Python versions**: the module is `ctypes` only, so the version should
   not matter. One job per platform on the newest Python, and one more on
   Linux on the oldest supported, shows it without multiplying the matrix.
@@ -728,7 +839,8 @@ says, and mark them untested in this plan until they have run.
 `docs/manual.md`, brought to solver2's state throughout, with its date and
 Gaps and caveats true. Two new sections:
 
-**Interfacing with Python**
+**Interfacing with Python** (`bindings/python/README.md` has a first
+version of most of this, to move into the manual)
 
 - building the shared library, and where the Python module finds it;
 - writing a problem in Python: genes, limits, descriptors, `evaluate`;
@@ -814,7 +926,7 @@ Keep this list as the work goes, for the manual's migration section.
    (`bindings/c/source/solver2c/checkpoint.d`); say if the core should
    have one after all.
 3. **Python packaging.** A plain folder whose module loads the library by
-   path (recommended for now), or a wheel.
+   path (recommended for now), or a wheel. Step 5 made the folder.
 4. **solver from here on.** Whether a bug found in code both hold
    (`cmaes.d`, `ensemble.d`) is fixed in both, or solver is frozen.
 5. **A remote and CI.** Decided 2026-11-12: Dev creates the GitHub
@@ -843,14 +955,28 @@ Keep this list as the work goes, for the manual's migration section.
      from solver's from the archive on, the check narrows to the stage's
      lines, and the change joins the list above.
 
+   Step 5 didn't need the answer: the Python example mirrors
+   `docs/example-class`, which has `minScore` −50 and passes
+   `checkProblem`. The question is now only whether `docs/example`
+   itself should follow the manual's rule.
+9. **Which D example the Python one must equal** (step 5). The plan said
+   `docs/example`; that can't be, because its learning spec is its own
+   and a problem behind the C interface has the class's. Step 5 added
+   `docs/example-class` and compares with that. The other way would be
+   to let a foreign problem choose its learning spec's layout (which
+   targets, one breach or two), so that a Python `Beam` could be given
+   `docs/example`'s. Not done: it would shape the interface around one
+   example. Say if you want it.
+
 ## How to work
 
 - LDC only, 1.42.0. Checks before every commit: `dub test --compiler=ldc2`
   in the core, and in `docs/example` both `dub test --compiler=ldc2` and
   `dub run --compiler=ldc2 --build=release`; in `bindings/c`
   `dub test --compiler=ldc2`, `dub build --compiler=ldc2 --build=release`
-  and then in `bindings/c/test` `dub run --compiler=ldc2`; from step 5
-  the Python tests.
+  and then in `bindings/c/test` `dub run --compiler=ldc2`; and in
+  `bindings/python` `python -m unittest discover -s tests`, which also
+  builds and runs `docs/example-class`.
 - Determinism and D style: `CLAUDE.md`, as in solver. In
   short: seeded noise only through `SplitMix64`; no `@fastmath` or
   `-fp-contract=fast`; fixed-order sums; goldens per platform; a test

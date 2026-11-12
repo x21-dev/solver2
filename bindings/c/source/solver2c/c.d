@@ -9,7 +9,7 @@ module solver2c.c;
 
 extern (C):
 
-enum int SOLVER2_ABI = 1;
+enum int SOLVER2_ABI = 2;
 
 enum : int
 {

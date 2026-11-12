@@ -40,7 +40,7 @@ extern "C" {
 
 /* The interface's version: solver2_abi() of a library built from this
  * header returns it. It changes when a struct or a function here does. */
-#define SOLVER2_ABI 1
+#define SOLVER2_ABI 2
 
 /* Return codes. */
 enum
@@ -202,6 +202,15 @@ int solver2_problem_cells(solver2_problem* problem, size_t* cells);
 
 /* The genes a search starts from when given none: `dimension` values. */
 int solver2_problem_start(solver2_problem* problem, double* genes);
+
+/* What genes stand for: `rows` gene vectors in `genes`, as many rows of
+ * `dimension` physical values into `values`, each gene clamped to [0, 1]
+ * and mapped over its range by its scale. These are the library's own
+ * numbers (a log scale goes through its exp and log), so an evaluation
+ * that reads its genes through here gets the bits a problem written in D
+ * gets, whatever the caller's own maths library rounds to. It may be
+ * called from inside the evaluation. */
+int solver2_problem_physical(solver2_problem* problem, size_t rows, const double* genes, double* values);
 
 /* A cell's name, one letter per axis, into `buffer` of `capacity` bytes
  * (the axes and one more). */

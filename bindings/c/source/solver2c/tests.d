@@ -381,6 +381,15 @@ unittest
     double[3] start;
     ok(solver2_problem_start(p, start.ptr));
     assert(n == 3 && cells == 16 && start == [0.5, 0.3, 0.5] && calls.batches == 0);
+    // Genes as the values they stand for: GeneSpec's own, clamped.
+    double[6] sampled = [0.25, 1.5, 0.5, -0.1, 0.3, 1.0], physical;
+    ok(solver2_problem_physical(p, 2, sampled.ptr, physical.ptr));
+    assert(physical == [0.5, 2, 0, 0, 0.6, 1]);
+    foreach (k; 0 .. 2)
+        foreach (i; 0 .. 3)
+            assert(physical[3 * k + i] is fieldGenes[i].toPhysical(sampled[3 * k + i]));
+    ok(solver2_problem_physical(p, 0, null, null));
+    refused(solver2_problem_physical(p, 2, sampled.ptr, null), "values is NULL");
     char[3] code;
     ok(solver2_problem_cell_code(p, 14, code.ptr, code.length));
     assert(code == "cd\0");

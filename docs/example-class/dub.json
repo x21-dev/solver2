@@ -1,0 +1,9 @@
+{
+    "name": "solver2-example-class",
+    "description": "The worked example on the class route: the same problem as a DynamicProblem, through solver2.dynamic. The reference of the Python example.",
+    "targetType": "executable",
+    "dependencies": {
+        "solver2": { "path": "../.." }
+    },
+    "sourceFiles": ["../example/source/checkpoint.d"]
+}

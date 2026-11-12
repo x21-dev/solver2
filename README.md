@@ -20,8 +20,10 @@ where the work stands. solver2 started as solver's code at commit
 far it adds the first of the two: `DynamicProblem`, a problem as a class
 that gets what a compile-time problem gets, and `solver2.dynamic`, the
 stage and the archive over it as plain functions (`runStage`,
-`runArchive`); and the C interface, a shared library with a header in
-[`bindings/c`](bindings/c/README.md). The Python module is next.
+`runArchive`); and the second: the C interface, a shared library with
+a header in [`bindings/c`](bindings/c/README.md), and the Python module
+over it in [`bindings/python`](bindings/python/README.md), with which a
+problem written in Python runs through the D searches.
 
 solver itself stays as it is, and the projects that use it need not
 change. The manual will say how to move a project to solver2.
@@ -38,5 +40,6 @@ dub test --compiler=ldc2
 ```
 
 To use it, see the [developer manual](docs/manual.md) and its worked
-example in `docs/example`. The manual is still solver's, with the module
+example in `docs/example`; `docs/example-class` is the same example as
+a class, and `bindings/python/examples/beam.py` the same in Python. The manual is still solver's, with the module
 names changed.

@@ -12,5 +12,8 @@
     "libs-posix": [
         "dl",
         "pthread"
+    ],
+    "stringImportPaths": [
+        "../include"
     ]
 }

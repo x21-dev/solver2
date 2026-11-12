@@ -41,6 +41,9 @@
             "importPaths": [
                 "source",
                 "test/source"
+            ],
+            "stringImportPaths": [
+                "include"
             ]
         }
     ]
