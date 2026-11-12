@@ -6,13 +6,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push to the same branch or pull request makes the older run moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os }}, Python ${{ matrix.python }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Runs differ between platforms (the C maths library), so each
+        # platform is tested on its own. The module is ctypes only, so the
+        # Python version shouldn't matter: the newest on each platform, and
+        # the oldest still tested once, on Linux.
+        include:
+          - os: ubuntu-latest
+            python: "3.x"
+          - os: windows-latest
+            python: "3.x"
+          - os: ubuntu-latest
+            python: "3.10"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -21,6 +36,16 @@ jobs:
         uses: dlang-community/setup-dlang@v2
         with:
           compiler: ldc-1.42.0
+
+      - name: Install Python ${{ matrix.python }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install numpy
+        run: python -m pip install numpy
+
+      # ── The core ────────────────────────────────────────────────────────
 
       - name: Unittests
         run: dub test --compiler=ldc2
@@ -34,3 +59,41 @@ jobs:
       - name: Worked example
         working-directory: docs/example
         run: dub run --compiler=ldc2 --build=release
+
+      # ── The C interface ─────────────────────────────────────────────────
+
+      # In one process with the D searches, held to them bit for bit; and
+      # the header read by ImportC and compared with the library.
+      - name: C interface's unittests
+        working-directory: bindings/c
+        run: dub test --compiler=ldc2
+
+      # The driver has no D runtime: it loads the library as a C or Python
+      # caller does. Against the build without bounds checks first, then
+      # the usual one, which stays in place for the Python tests.
+      - name: Shared library without bounds checks
+        working-directory: bindings/c
+        run: dub build --compiler=ldc2 --build=release --config=unchecked
+
+      - name: Driver, without bounds checks
+        working-directory: bindings/c/test
+        run: dub run --compiler=ldc2
+
+      - name: Shared library
+        working-directory: bindings/c
+        run: dub build --compiler=ldc2 --build=release
+
+      - name: Driver
+        working-directory: bindings/c/test
+        run: dub run --compiler=ldc2
+
+      # ── Python ──────────────────────────────────────────────────────────
+
+      # The module against the library just built. tests/test_example.py
+      # builds docs/example-class and checks that the Python worked example
+      # prints what it prints, bit patterns included: the same bits through
+      # Python, within this job, so on one platform.
+      # A RuntimeWarning fails them: numpy gives one when it has to guess.
+      - name: Python tests
+        working-directory: bindings/python
+        run: python -W error::RuntimeWarning -m unittest discover -s tests -v

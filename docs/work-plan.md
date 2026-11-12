@@ -12,12 +12,12 @@ Written 2026-11-12.
 | Step | State |
 |---|---|
 | 0. Set up | done 2026-11-12 |
-| 1. Spike: Python calls D | done on Windows 2026-11-12: it works; Linux owed |
+| 1. Spike: Python calls D | done on Windows 2026-11-12: it works (never run on Linux; the driver of step 4 is, in CI) |
 | 2. The class, completed | done 2026-11-12 |
 | 3. Entry points and run-time `minScore` | done 2026-11-12 |
-| 4. The C interface | done on Windows 2026-11-12; Linux owed |
-| 5. The Python module | done on Windows 2026-11-12; Linux owed |
-| 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
+| 4. The C interface | done 2026-11-12; on Linux since step 6 |
+| 5. The Python module | done 2026-11-12; on Linux since step 6 |
+| 6. CI | done 2026-11-12: Linux and Windows, every push and pull request |
 | 7. The manual | next |
 
 solver2 is solver's code with the package and modules renamed, plus the
@@ -222,9 +222,9 @@ last bits with the thread count. The manual must say so.
 
 ## Steps
 
-One branch and one pull request per step once the repository has a
-remote; until then, one commit per step. Each step lists what makes it
-done.
+One branch and one pull request per step now that the repository has a
+remote (steps 0 to 5 were one commit each on `main`, before it had).
+Each step lists what makes it done.
 
 ### 0. Set up (done 2026-11-12)
 
@@ -788,51 +788,66 @@ tests (30).
 - The interface's omissions are the module's too (step 4, "Not done, or
   not exposed").
 
-### 6. CI
+### 6. CI (done 2026-11-12)
 
-Dev creates the GitHub repository once solver2 is mature enough
-(2026-11-12); this step waits for it. Until then every check runs on
-Dev's Windows machine only (see "Linux before the remote" below).
+Dev published the repository on 2026-11-12:
+[x21-dev/solver2](https://github.com/x21-dev/solver2), public. From here
+on a step is a branch and a pull request, and `main` is what has passed
+CI.
 
-`.github/workflows/ci.yml` is solver's and already runs, on
-`ubuntu-latest` and `windows-latest` with LDC 1.42.0, the core's tests,
-the example's tests and the example. To add:
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request, three jobs: `ubuntu-latest` and `windows-latest` on the newest
+Python (3.15.2 when it was written), and `ubuntu-latest` once more on
+Python 3.10, the oldest tested. Each job, with LDC 1.42.0:
 
-- **The shared library**: in `bindings/c`, `dub test --compiler=ldc2`,
-  then `dub build --compiler=ldc2 --build=release`, then in
-  `bindings/c/test` `dub run --compiler=ldc2`, which drives the library
-  through the exported functions only (it needs the library built
-  first, and a C compiler for ImportC's preprocessor, which both runners
-  have).
-- **Python**: `actions/setup-python`, then numpy with pip (the tests use
-  the standard library's `unittest`), then in `bindings/python`
-  `python -m unittest discover -s tests`, against the library just
-  built.
-- **The same bits through Python**: `tests/test_example.py` does it,
-  within the job (so on one platform): it builds `docs/example-class`
-  with dub and compares what `examples/beam.py` prints with it.
-- **Python versions**: the module is `ctypes` only, so the version should
-  not matter. One job per platform on the newest Python, and one more on
-  Linux on the oldest supported, shows it without multiplying the matrix.
+1. the core's tests, the example's tests and the example (solver's
+   workflow, as it was);
+2. the C interface's tests (`bindings/c`), which read the header with
+   ImportC;
+3. the shared library built without bounds checks and the driver
+   against it, then the same with the checks, which is the build left
+   in place;
+4. numpy from pip, then the Python tests (`bindings/python`), a
+   `RuntimeWarning` failing them. `tests/test_example.py` builds
+   `docs/example-class` and compares the Python example with it: the
+   same bits through Python, within the job, so on one platform.
+
+A job takes two to three minutes. The repository is public, so the
+minutes aren't billed.
+
+**Linux, at last.** Nothing of steps 2 to 5 had run on Linux. All of it
+passed there on its first run (pull request 1): the core's tests, both
+examples, the binding's tests with ImportC's `cc`, `libsolver2.so` with
+the D runtime linked in and hidden visibility, loaded by `dlopen` from
+the driver with no D runtime of its own, the threads' exit hook on a
+pthread key (two foreign threads at once, twelve one after another),
+and the Python module on 3.15.2 and 3.10.22, its example printing what
+the D class-route example prints. What was written from the
+documentation and marked untested in steps 4 and 5 needed no change.
+
+One thing the Linux run on Python 3.10 showed, in the module: reading an
+archive's elites went through numpy's view of a `ctypes` array of
+structs, and Python before 3.11 describes a padded struct wrongly to
+numpy, which then guesses the layout and warns. The guess was right, but
+the module now gives numpy the layout from the `ctypes` declaration
+itself, and CI fails on a `RuntimeWarning`.
+
+Not in CI:
+
 - **The equivalence with solver** (the example's output against solver's
-  at `ae68dbb`) needs solver's code in the job. Keep it a local check
-  unless Dev wants the workflow to fetch solver.
+  at `ae68dbb`). It is still a local check (see step 0). solver's
+  repository is public too, so the workflow could fetch it and compare;
+  say if you want that.
+- **The spike** (step 1) was never run on Linux and won't be: the driver
+  is what it led to, and that runs there.
+- **macOS**, as planned.
+
+The old plan for this step, kept for what it says of the matrix:
 
 Keep the matrix small: on a private repository Windows minutes cost
-more than Linux's and macOS minutes far more (check GitHub's current
-rates when the repository exists). macOS is not planned;
+more than Linux's and macOS minutes far more. macOS is not planned;
 runs differ between platforms anyway, so adding it would mean a third
 set of reference outputs.
-
-#### Linux before the remote
-
-The machine has no WSL and no Docker (checked 2026-11-12), so nothing
-here has run on Linux, and nothing will until the repository exists (CI,
-or a cloud session, whose SessionStart hook installs LDC) or Dev offers
-another Linux machine. Steps 1 to 5 are therefore done on Windows first,
-and each one's Linux run is owed to step 6. Write Linux-specific parts
-(the `.so` name, how the library is found, `-fPIC`) as the documentation
-says, and mark them untested in this plan until they have run.
 
 ### 7. The manual
 
@@ -931,7 +946,10 @@ Keep this list as the work goes, for the manual's migration section.
    (`cmaes.d`, `ensemble.d`) is fixed in both, or solver is frozen.
 5. **A remote and CI.** Decided 2026-11-12: Dev creates the GitHub
    repository once solver2 is mature enough, and step 6 then extends
-   solver's workflow. Don't create a repository or push from a session.
+   solver's workflow. Done the same day: Dev published
+   x21-dev/solver2, and step 6 went in as a branch and a pull request,
+   pushed from the session with Dev's word. Ask before pushing; merging
+   is Dev's.
 6. **Python owning the loop** (ask for candidates, evaluate, tell the
    results, as pycma and pyribs do). Possible later without rewriting the
    searches, by running them in a D fiber that pauses at each `evaluate`.
@@ -970,6 +988,8 @@ Keep this list as the work goes, for the manual's migration section.
 
 ## How to work
 
+- CI runs the checks below on Linux and Windows for every pull request;
+  run them locally first all the same, they take two minutes.
 - LDC only, 1.42.0. Checks before every commit: `dub test --compiler=ldc2`
   in the core, and in `docs/example` both `dub test --compiler=ldc2` and
   `dub run --compiler=ldc2 --build=release`; in `bindings/c`
