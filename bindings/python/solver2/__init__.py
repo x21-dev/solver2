@@ -673,7 +673,11 @@ class Archive(_Run):
             self._made, occupied.ctypes.data_as(C.POINTER(C.c_ubyte)), _pointer(value),
             found.ctypes.data_as(C.POINTER(C.c_size_t)), _pointer(genes), outcomes, _pointer(violations),
             _pointer(descriptors)))
-        e = np.ctypeslib.as_array(outcomes)
+        # The structs' layout from their ctypes declaration, padding and
+        # all. (numpy's own reading of a ctypes array of structs goes by a
+        # format string that Python before 3.11 gets wrong for a padded
+        # struct, and numpy then guesses, with a warning.)
+        e = np.frombuffer(outcomes, dtype=np.dtype(_c.Outcome))
         return Elites(occupied.astype(bool), value, found, genes, e["objective"].copy(), e["scored"] != 0,
                       e["hard"].copy(), e["terminal"].copy(), e["soft"].copy(), violations, descriptors)
 

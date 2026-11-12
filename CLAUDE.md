@@ -51,8 +51,11 @@ developer manual, which is still solver's until the plan's step 7.
   prints the same output as solver's at `ae68dbb` on one platform (but
   for a change the plan lists under "Changes a migrating project will
   meet"). Check it when a change touches the searches.
-- Commit only when Dev asks. The repository has no remote and no CI yet
-  (`.github/workflows/ci.yml` is solver's, waiting for one).
+- Commit only when Dev asks, and ask before pushing. The repository is
+  github.com/x21-dev/solver2 (public): a step is a branch and a pull
+  request, and merging is Dev's. CI (`.github/workflows/ci.yml`) runs
+  every check above on Linux and Windows for each push to `main` and
+  each pull request, and once more on Linux on the oldest Python tested.
 - `docs/example/source/checkpoint.d` is printed whole in the manual (To a
   file) as the checkpoint template. Change both together: a
   `static assert` in `docs/example/source/app.d` fails the build when

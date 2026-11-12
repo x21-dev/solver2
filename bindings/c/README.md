@@ -75,6 +75,4 @@ dub run --compiler=ldc2                         # the driver
 | `source/solver2c/tests.d` | The tests `dub test` runs |
 | `test/` | The driver, a dub package of its own |
 
-Not run on Linux yet: the thread-exit hook's `pthread` half, the driver's
-`dlopen` half and the build flags are written as the documentation says
-and wait for a Linux machine (the work plan's step 6).
+CI runs all of the above on Linux and Windows.

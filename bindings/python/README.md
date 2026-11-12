@@ -125,6 +125,5 @@ python -m unittest discover -s tests
   same lines, bit patterns included. It needs dub and LDC.
 
 The tests use the standard library's `unittest`; nothing to install but
-numpy.
-
-Not run on Linux yet (the work plan's step 6).
+numpy. CI runs them on Linux and Windows with the newest Python, and on
+Linux with Python 3.10, the oldest tested.
