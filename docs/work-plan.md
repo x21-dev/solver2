@@ -17,7 +17,7 @@ Written 2026-11-12.
 | 3. Entry points and run-time `minScore` | |
 | 4. The C interface | |
 | 5. The Python module | |
-| 6. CI | waits for a remote (open question 5) |
+| 6. CI | waits for Dev to create the GitHub repository; Linux runs of steps 1 to 5 are owed to it |
 | 7. The manual | |
 
 solver2 is solver's code with the package and modules renamed, and
@@ -248,10 +248,11 @@ code under `spike/`.
   reads the result.
 - The same problem run natively in D, and the two results compared bit
   for bit.
-- Done when it passes on Windows and Linux, including a run long enough
-  for the collector to run many times, and the findings are written into
-  this plan (build flags, how the runtime starts, anything that
-  surprised).
+- Done when it passes on Windows, including a run long enough for the
+  collector to run many times, and the findings are written into this
+  plan (build flags, how the runtime starts, anything that surprised).
+  Its Linux run waits for a Linux machine (step 6, "Linux before the
+  remote"): the spike's verdict covers Windows only until then.
 - If the D runtime can't be made to behave inside a Python process, stop
   and bring it to Dev. The fallback is a D program driven over a pipe.
 
@@ -284,9 +285,42 @@ platform. Done when the tests pass against the library built in step 4.
 
 ### 6. CI
 
-On Linux and Windows, with LDC 1.42.0: the core's tests, the D example,
-the shared library, and the Python tests. Needs a remote (open
-question 5).
+Dev creates the GitHub repository once solver2 is mature enough
+(2026-11-12); this step waits for it. Until then every check runs on
+Dev's Windows machine only (see "Linux before the remote" below).
+
+`.github/workflows/ci.yml` is solver's and already runs, on
+`ubuntu-latest` and `windows-latest` with LDC 1.42.0, the core's tests,
+the example's tests and the example. To add:
+
+- **The shared library**: build `bindings/c` and run its D test, which
+  drives it through the exported functions only.
+- **Python**: `actions/setup-python`, then numpy and the test runner with
+  pip, then the Python tests against the library just built.
+- **The same bits through Python**: the Python worked example's result
+  compared with the D example's, within one job (so on one platform).
+- **Python versions**: the module is `ctypes` only, so the version should
+  not matter. One job per platform on the newest Python, and one more on
+  Linux on the oldest supported, shows it without multiplying the matrix.
+- **The equivalence with solver** (the example's output against solver's
+  at `ae68dbb`) needs solver's code in the job. Keep it a local check
+  unless Dev wants the workflow to fetch solver.
+
+Keep the matrix small: on a private repository Windows minutes cost
+more than Linux's and macOS minutes far more (check GitHub's current
+rates when the repository exists). macOS is not planned;
+runs differ between platforms anyway, so adding it would mean a third
+set of reference outputs.
+
+#### Linux before the remote
+
+The machine has no WSL and no Docker (checked 2026-11-12), so nothing
+here has run on Linux, and nothing will until the repository exists (CI,
+or a cloud session, whose SessionStart hook installs LDC) or Dev offers
+another Linux machine. Steps 1 to 5 are therefore done on Windows first,
+and each one's Linux run is owed to step 6. Write Linux-specific parts
+(the `.so` name, how the library is found, `-fPIC`) as the documentation
+says, and mark them untested in this plan until they have run.
 
 ### 7. The manual
 
@@ -347,8 +381,9 @@ Keep this list as the work goes, for the manual's migration section.
    path (recommended for now), or a wheel.
 4. **solver from here on.** Whether a bug found in code both hold
    (`cmaes.d`, `ensemble.d`) is fixed in both, or solver is frozen.
-5. **A remote and CI.** No GitHub repository was created. solver's
-   licence is proprietary, so publishing anything is Dev's call.
+5. **A remote and CI.** Decided 2026-11-12: Dev creates the GitHub
+   repository once solver2 is mature enough, and step 6 then extends
+   solver's workflow. Don't create a repository or push from a session.
 6. **Python owning the loop** (ask for candidates, evaluate, tell the
    results, as pycma and pyribs do). Possible later without rewriting the
    searches, by running them in a D fiber that pauses at each `evaluate`.
