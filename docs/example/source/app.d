@@ -134,8 +134,12 @@ static assert(() {
 // The run
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The lowest value a beam within its limits can have is −48.25, at width 2
+/// and rate 100: the archive's thresholds start below it.
+enum double MIN_SCORE = -50;
+
 alias Model = LearnedModel!Beam;
-alias A = Archiving!(Beam, BinnedGrid);
+alias A = Archiving!(Beam, BinnedGrid, ArchiveOptions, 0, MIN_SCORE);
 
 static immutable Axis[2] axes = [Axis("width", [3, 5, 7], "nmwW", 0, 2),
                                  Axis("rate", [1, 10, 40], "slfF", 0, 10)];

@@ -8,10 +8,11 @@ Python module over it. It started as solver's code at commit `ae68dbb`,
 with the package and modules renamed to `solver2`.
 
 **Read `docs/work-plan.md` before starting**: it is the plan and the
-hand-over (design, steps, where the work stands, open questions for Dev).
-Update it in the same change when a step is done, a decision is made or
-the plan changes. See README.md for a summary and docs/manual.md for the
-developer manual, which is still solver's until the plan's step 7.
+hand-over (design, steps, where the work stands, the questions Dev
+decided). Its steps are all done; keep it true when a decision is made
+or work is added. See README.md for a summary and docs/manual.md for the
+developer manual, which documents all three routes (a compile-time
+problem, the class, Python and C) and the migration from solver.
 
 ## Working here
 
@@ -47,10 +48,30 @@ developer manual, which is still solver's until the plan's step 7.
   its first call, and detached by a hook when it ends. Don't attach and
   detach per call: with this druntime that corrupts memory (the work
   plan's step 4 says how).
-- The compile-time route must keep solver's bits: the worked example
-  prints the same output as solver's at `ae68dbb` on one platform (but
-  for a change the plan lists under "Changes a migrating project will
-  meet"). Check it when a change touches the searches.
+- The shared library links the D runtime statically on Windows and uses
+  LDC's shared runtime on Linux (`bindings/c/dub.json`). Never link it
+  statically on Linux: the collector then scans the wrong thread-local
+  storage and crashes about once in 50 runs of the driver (the work
+  plan's step 7 says how it was found). CI checks it with `ldd`.
+- A crash that shows on Linux only can be hunted on CI: a temporary
+  branch named `debug-...` with a workflow of its own that loops the
+  failing program with core dumps on and prints gdb's backtraces (step
+  7 has the recipe). Ask before pushing it, and delete it afterwards.
+- The compile-time route must keep solver's bits. The worked example's
+  stage prints what solver's at `ae68dbb` prints on one platform; its
+  archive's lines differ only because its `minScore` is −50 (with
+  `MIN_SCORE` set to 0 in a copy it prints all of solver's lines). Check
+  both when a change touches the searches; the plan's step 0 says how.
+  A deliberate change of bits goes on the plan's list "Changes a
+  migrating project will meet" and into the manual's "Migrating from
+  solver".
+- solver is frozen by default: a bug in code both hold is fixed here and
+  listed as above, and Dev decides for each whether solver gets the fix,
+  in a session of solver's own.
+- The manual documents the Python module and the C interface
+  ("Interfacing with Python"): a change of `bindings/` that a user can
+  see changes that section too, its C program included (it was compiled
+  and run by hand, with `ldc2 demo.c solver2.lib`).
 - Commit only when Dev asks, and ask before pushing. The repository is
   github.com/x21-dev/solver2 (public): a step is a branch and a pull
   request, and merging is Dev's. CI (`.github/workflows/ci.yml`) runs

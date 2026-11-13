@@ -13,9 +13,8 @@
 /// What differs from docs/example, which is a compile-time problem with a
 /// learning spec of its own: the learning spec here is the class's default
 /// (the value, the hard and the terminal breach, the descriptors), which
-/// is all a problem behind the C interface can have, and `minScore` is
-/// below the problem's lowest value, so `checkProblem` passes. The two
-/// examples' runs therefore differ.
+/// is all a problem behind the C interface can have. The two examples'
+/// runs therefore differ.
 module app;
 
 import std.exception : enforce;

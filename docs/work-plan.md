@@ -5,7 +5,9 @@ it out. Read it all before starting, and keep it true: when a step is
 done, a decision is made or the plan changes, update it in the same
 change.
 
-Written 2026-11-12.
+Written 2026-11-12. All its steps were done by 2026-11-13: from here it
+is the record of how solver2 was built, and the place for what comes
+next ("After step 7", below).
 
 ## Where the work stands
 
@@ -18,16 +20,18 @@ Written 2026-11-12.
 | 4. The C interface | done 2026-11-12; on Linux since step 6 |
 | 5. The Python module | done 2026-11-12; on Linux since step 6 |
 | 6. CI | done 2026-11-12: Linux and Windows, every push and pull request |
-| 7. The manual | next |
+| 7. The manual | done 2026-11-13 |
 
 solver2 is solver's code with the package and modules renamed, plus the
 completed `DynamicProblem` (step 2), the archive's `minScore` as a value
 known at run time, the searches over the class as plain functions in
 `solver2.dynamic` (step 3), their C interface as a shared library in
 `bindings/c` (step 4), and the Python module over it in
-`bindings/python` (step 5). The searches otherwise are unchanged: the
-worked example still prints what solver's does, and its final archive
-has the same bits.
+`bindings/python` (step 5), and a manual that documents all of it
+(step 7). The searches otherwise are unchanged: the worked example's
+stage prints what solver's does, and so did its archive, to the last bit,
+until step 7 gave the example a `minScore` of −50 (with 0 it still
+does).
 
 ## What solver2 is
 
@@ -253,6 +257,12 @@ To repeat the comparison after a change to the searches: export solver
 and compare what the programs print (dub's own lines name the package and
 differ).
 
+Since step 7 the example's archive starts its thresholds at −50, so only
+the stage's five lines equal solver's. To compare the archive too, do it
+in a copy of solver2 (`git archive HEAD | tar -x -C <dir>`) with
+`MIN_SCORE` set to 0 in `docs/example/source/app.d`: it then prints all
+twelve of solver's lines.
+
 ### 1. Spike: Python calls D (done on Windows 2026-11-12)
 
 The risky parts, tested before anything is designed around them. The
@@ -296,6 +306,8 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
   runtime (919 KB), exports only the functions marked `export`, and
   loads. On Linux LDC also links the shared runtime into a shared library
   by default, so the same flag is expected to be needed there (untested).
+  (Wrong for Linux: there the static runtime is a fault, and the library
+  uses the shared one. See step 7.)
 - **The runtime doesn't start by itself.** A call before `init`
   (`rt_init`) is an access violation. No `DllMain` is needed.
 - **Errors stay on their side.** A D exception is caught at the exported
@@ -335,6 +347,7 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
 #### What it changes in the design
 
 - **Build the binding with the three flags above**, on both platforms.
+  (On Windows only, since step 7.)
 - **Bounds checks on in the binding, and only there** (`-boundscheck=on`;
   Dev's decision, 2026-11-12): a real problem's evaluation dwarfs the
   26%, and a bug then reaches Python as an error instead of corrupting
@@ -824,6 +837,8 @@ pthread key (two foreign threads at once, twelve one after another),
 and the Python module on 3.15.2 and 3.10.22, its example printing what
 the D class-route example prints. What was written from the
 documentation and marked untested in steps 4 and 5 needed no change.
+(Not so: the runtime linked statically was a fault on Linux that these
+runs happened to miss. Step 7 found it and has the fix.)
 
 One thing the Linux run on Python 3.10 showed, in the module: reading an
 archive's elites went through numpy's view of a `ctypes` array of
@@ -849,48 +864,165 @@ more than Linux's and macOS minutes far more. macOS is not planned;
 runs differ between platforms anyway, so adding it would mean a third
 set of reference outputs.
 
-### 7. The manual
+### 7. The manual (done 2026-11-13)
 
-`docs/manual.md`, brought to solver2's state throughout, with its date and
-Gaps and caveats true. Two new sections:
+`docs/manual.md` is solver2's: every section brought to solver2's state,
+two new sections, the date and Gaps and caveats true on 2026-11-13.
 
-**Interfacing with Python** (`bindings/python/README.md` has a first
-version of most of this, to move into the manual)
+**What changed in the manual**
 
-- building the shared library, and where the Python module finds it;
-- writing a problem in Python: genes, limits, descriptors, `evaluate`;
-- running a stage and an archive; reading the results; progress and
-  stopping;
-- the learned model from Python;
-- saving and resuming;
-- what to know: threads, exceptions, determinism of a Python
-  `evaluate` (numpy's summation order), cost per batch, the wait beside a
-  busy Python thread;
-- building the library with or without bounds checks: completes the
-  manual's "Bounds checks" (under Performance), which already covers a D
-  project and was written on 2026-11-12;
-- the C interface itself, for other languages.
+- **The head**: what solver2 is, the three routes a problem can take (a
+  compile-time struct, the class, Python or C) with a worked example
+  each, and where solver stands. The note that it was still solver's
+  manual is gone, and "solver" now means the older project wherever it
+  appears.
+- **Interfacing with Python** (new, section 8): setting up, a problem in
+  Python, a stage, the archive, a learned model, stopping and saving,
+  errors and exceptions, threads, determinism with numpy, what Python
+  costs, the library's bounds checks, and the C interface for other
+  languages. `bindings/python/README.md`'s "What to know" moved here;
+  that README is now the quick start, the setting up, the tests and a
+  pointer.
+- **The C interface's small program** in that section (a stage over a
+  one-gene problem) was compiled and run by hand against the built
+  library (`ldc2 demo.c solver2.lib`, ImportC; it printed `best
+  10.000000 after 400 evaluations`). It is not a tracked file and no
+  test builds it.
+- **Migrating from solver** (new, section 12): who needs to, what stays,
+  what changes (from the list below), how to prove the same bits with a
+  golden run, saved states, and moving a compile-time problem to the
+  class, with a table of what becomes what and what the move costs.
+- **Gaps and caveats**: 18 items, in three groups (the searches, the
+  class route, Python and the C interface). New: a prediction ranked
+  without its soft breach (found in step 2), `StageEnd.rise` (step 3),
+  `checkProblem`'s limits, what the entry points fix, the library owning
+  the loop (question 6), the folder that isn't a wheel (question 3),
+  what the interface leaves out (step 4), the library not started
+  twice, the Pythons tested, the saved bytes' format, and the model
+  saved for the roll-back (step 5).
+- Smaller: the class route's cost under Performance, the model's pool in
+  the library, the module reference's table of what lies outside the
+  core, a pointer from Determinism to numpy's rules.
 
-**Migrating from solver**
+**`docs/example` has a `minScore` of −50** (question 8), as the template's
+argument: `Archiving!(Beam, BinnedGrid, ArchiveOptions, 0, MIN_SCORE)`.
+Its stage's five lines are unchanged, and are solver's. From the archive
+on the output differs, as expected: the QD score counts from −50 (586.33
+after 10 iterations, where it was 39.17), and the run takes another path
+(4 explorer targets reached where there were 8; 14 of 16 cells and a
+best of 9.9880 both ways). There were no reference outputs kept in the
+repository to renew: the example checks itself (the resumed run against
+the uninterrupted one), and the comparison with solver is by hand (step
+0 says how, now).
 
-- who needs to: nobody; solver stays as it is;
-- what is the same: the problem concept and its members, the options, the
-  callbacks;
-- what changes: the package and module names, `minScore`, and whatever
-  else the steps above change, kept as a list while working (below);
-- the same bits: a migrated project gives byte-identical runs on one
-  platform, and how to prove it with a golden run (the same run before
-  and after, files compared);
-- saved states: whether a checkpoint written with solver reads in
-  solver2;
-- moving a compile-time problem to the class, for a project that wants
-  the run-time route.
+**A checkpoint written with solver reads in solver2: checked.** The plan
+had it from the template's own test only. On Windows: solver's example
+at `ae68dbb`, exported outside its checkout and changed to keep its
+checkpoint (written after 10 iterations, 598,631 bytes), and a copy of
+solver2's example at `b673f92` (so `minScore` 0) given solver's magic
+string and made to load that file. It loaded, resumed, and passed the
+example's own check against its uninterrupted run, bit for bit, printing
+solver's twelve lines. The manual's "Saved states" says so.
 
-Also the `README.md`.
+**Also changed**: `README.md` (what solver2 is, not what it is becoming),
+`bindings/c/README.md` (a pointer to the manual), `CLAUDE.md` (the
+manual is solver2's; the equivalence check as it now stands; solver
+frozen by default; the manual's Python section changes with
+`bindings/`).
+
+Checked on Windows with LDC 1.42.0 and Python 3.15.0: the core's tests,
+the example's tests and its run, the binding's tests, the library and
+the driver, the Python tests; and on Linux by CI. The manual's anchors and file links were
+checked by a throwaway script (every `](#...)` has its heading, no
+heading twice).
+
+**Found by CI on this step's pull request: the library crashed on Linux,
+about once in 50 runs.** The driver segfaulted in the job "ubuntu-latest,
+Python 3.x" (exit code -11, nothing printed), while the other Linux job
+passed the same step. The step changes no code of the library, so the
+fault was there since step 4, and five earlier CI runs had missed it.
+
+- **Hunted on CI**, there being no Linux on this machine: a temporary
+  branch, `debug-driver-linux`, with a workflow of its own (on a push to
+  `debug-**`): the library built with `DFLAGS=-g`, core dumps on
+  (`ulimit -c unlimited`, `kernel.core_pattern` set to a file), the
+  driver run up to 250 times in each of six jobs, and on the first
+  failure what it had printed and `gdb -batch -ex "thread apply all bt"`
+  on the core. All six jobs crashed, at runs 21 to 154, all at the same
+  place.
+- **Where**: the main thread, in the archive with a model, in a
+  collection: `Gcx.collectRoots` under `rt.sections_elf_shared.scanTLSRanges`
+  under `thread_scanAll`. Not the foreign threads, which a first guess
+  had blamed (druntime's `thread_attachThis` allocates before it
+  registers the thread; a stress test of 7,200 attaches on Windows found
+  nothing, and that guess stays unproven either way).
+- **Why**: druntime's `getTLSRange`, with a static runtime on Linux x86
+  (`Static_Linux_X86_Any` in LDC 1.42's `rt/sections_elf_shared.d`),
+  takes a thread's TLS block to be the `size` bytes just below its
+  thread control block. That holds when the D code is the executable.
+  In a shared library the block is elsewhere, so every collection
+  scanned memory that wasn't the library's, and the library's own TLS
+  was never scanned. On the main thread the wrong range can run off the
+  start of a mapping, depending on where the loader put things: hence
+  one run in 50.
+- **The fix**: on Linux the library uses LDC's shared runtime, which
+  finds TLS through the loader (`bindings/c/dub.json`:
+  `-link-defaultlib-shared=true` and a run path of `$ORIGIN` for posix;
+  Windows as before). The same hunt on the fixed library: six jobs of
+  250 runs, 1500 in all, no crash. `ldd` shows the two libraries, and
+  the run path is `$ORIGIN` and then LDC's `lib`.
+- **What it costs**: on Linux the library is no longer one file. It needs
+  `libdruntime-ldc-shared.so.112` and `libphobos2-ldc-shared.so.112`,
+  found in the LDC that built it, or copied beside it. The manual, both
+  READMEs and its gap 18 say so. Step 1's "the runtime must be linked
+  statically" was shown on Windows and holds there; its guess that Linux
+  would need the same flag was wrong, and step 6's first green runs on
+  Linux were luck.
+- **So that it stays found**: CI checks on Linux that the library uses
+  the shared runtime (`ldd`), and the driver's output is unbuffered, so
+  a crash no longer takes the lines before it along.
+- **Not checked**: whether, with the shared runtime, the TLS of a thread
+  attached by `thread_attachThis` is scanned (druntime keeps the list of
+  loaded libraries per thread, and fills it for threads it starts). The
+  binding keeps nothing of the collector's in thread-local storage (the
+  last error is a plain buffer), so nothing depends on it today; keep it
+  so.
+
+**Decided here, for Dev to overrule**
+
+- **`docs/example`'s learning spec still learns the objective**, though
+  the manual now says a problem with soft limits should learn the value
+  (gap 3, and a bullet under "The learning spec"). Changing it would
+  change the stage's lines, the last of the example's output that equals
+  solver's. The manual says so where it shows the spec. To change it:
+  `t[0] = e.scored ? e.objective - e.breach.soft : double.nan;` in
+  `Beam.targets`, in `app.d` and in the manual's copy, and the
+  comparison with solver then needs the old line in a copy.
+- **`checkProblem` refusing a neutral value outside its range is not in
+  the manual's migration list**: solver has no `checkProblem`, so no
+  migrating project meets it. It stays on the list below as a change
+  within solver2.
+
+### After step 7
+
+Nothing is planned. What the steps left open, should it be wanted:
+
+- **The equivalence with solver in CI** (step 6): fetch solver at
+  `ae68dbb`, run both examples, compare the stage's lines, and the
+  archive's with `MIN_SCORE` 0.
+- **The manual's C program as a tested file**, built and run by CI
+  against the library, so that it can't rot.
+- **A wheel** (question 3) and **Python owning the loop** (question 6):
+  decided against for now.
+- **A cheaper roll-back for the model** (step 5): forget the rows learned
+  since the last whole iteration instead of saving the model each time.
+- **The interface's omissions** (step 4, "Not done, or not exposed"; the
+  manual's gap 13).
+- **macOS**: untested, and it would need a third set of goldens.
 
 ## Changes a migrating project will meet
 
-Keep this list as the work goes, for the manual's migration section.
+Kept as the work went, for the manual's migration section.
 
 - **The names** (step 0): the dub package is `solver2` and every module
   `solver2.*`. A project changes its dependency (`"solver2": { "path":
@@ -921,29 +1053,47 @@ Keep this list as the work goes, for the manual's migration section.
 - **`checkProblem` refuses a gene whose neutral value is outside its
   range** (step 4). It used to pass: the start genes are clamped, so the
   check on them could never fail. `checkDescription` is the half of
-  `checkProblem` that evaluates nothing.
+  `checkProblem` that evaluates nothing. (A change within solver2:
+  solver has no `checkProblem`, so the manual's migration section leaves
+  it out.)
 - **A problem's member named `minScore` is now read by the archive**
   (step 3), as where its thresholds start, and `Archiving`'s `minScore`
   argument must then stay 0. None of pleaser, pleaser-bus-chain and
   pleaser-console-tilt has such a member (they pass `MIN_SCORE` as the
   argument, which goes on working).
+- **The worked example's archive starts its thresholds at −50** (step 7,
+  question 8), where solver's starts them at 0. Not a change a project
+  meets in its own code; one that compares its build's example output
+  with solver's does. The stage's lines are the same.
+
+The manual's "Migrating from solver" has this list, in its own order.
+Add to both.
 
 ## Open questions for Dev
+
+None is open: all nine were decided, the last six on 2026-11-13. They
+keep their numbers, which the steps above refer to.
 
 1. **Names.** Decided 2026-11-12: package `solver2`, modules `solver2.*`.
    A build can never pick up the wrong library, and migration is a search
    and replace of the imports.
-2. **Checkpoints.** solver has no checkpoint API by decision: the save
-   format is the manual's template, copied by each project. Python can't
-   walk D structs, so the binding has to export a run as bytes.
-   Recommended: the binding copies the template, as any project does, and
-   the core still gets no serialiser. Step 4 did so
-   (`bindings/c/source/solver2c/checkpoint.d`); say if the core should
-   have one after all.
-3. **Python packaging.** A plain folder whose module loads the library by
-   path (recommended for now), or a wheel. Step 5 made the folder.
-4. **solver from here on.** Whether a bug found in code both hold
-   (`cmaes.d`, `ensemble.d`) is fixed in both, or solver is frozen.
+2. **Checkpoints.** Decided 2026-11-13: the core gets no serialiser.
+   solver has no checkpoint API by decision: the save format is the
+   manual's template, copied by each project. Python can't walk D
+   structs, so the binding exports a run as bytes, and for that it
+   copies the template as any project does
+   (`bindings/c/source/solver2c/checkpoint.d`, step 4).
+3. **Python packaging.** Decided 2026-11-13: the plain folder of step 5,
+   whose module loads the library by path. A wheel (per-platform builds
+   with LDC, versions, releases) waits until someone needs to install
+   the module without a checkout.
+4. **solver from here on.** Decided 2026-11-13: solver is frozen by
+   default. A bug found in code both hold (`cmaes.d`, `ensemble.d`) is
+   fixed in solver2 and listed under "Changes a migrating project will
+   meet"; tell Dev, who decides for each bug whether solver gets the fix
+   too, in a session of solver's own (never from here). A fix that
+   changes bits would invalidate the golden runs of the projects on
+   solver, which is why it is not automatic.
 5. **A remote and CI.** Decided 2026-11-12: Dev creates the GitHub
    repository once solver2 is mature enough, and step 6 then extends
    solver's workflow. Done the same day: Dev published
@@ -951,40 +1101,30 @@ Keep this list as the work goes, for the manual's migration section.
    pushed from the session with Dev's word. Ask before pushing; merging
    is Dev's.
 6. **Python owning the loop** (ask for candidates, evaluate, tell the
-   results, as pycma and pyribs do). Possible later without rewriting the
-   searches, by running them in a D fiber that pauses at each `evaluate`.
-   Not planned.
+   results, as pycma and pyribs do). Decided 2026-11-13: not planned.
+   Possible later without rewriting the searches, by running them in a D
+   fiber that pauses at each `evaluate`. Step 7 lists it in the manual's
+   Gaps and caveats.
 7. **Bounds checks in the binding.** Decided 2026-11-12: on in the
    Python binding only, and the manual says how to turn them on or off in
    any case, for the binding and for a D project. The core, as a source
    library, takes whatever flags its user builds with.
 8. **The worked example's `minScore`** (found in step 3). `Beam`'s values
    go down to about −48 and its thresholds start at 0, against the
-   manual's own rule. Step 5 wants a Python `Beam` whose result equals
-   the D example's bit for bit: as a `DynamicProblem` with `minScore` 0
-   it runs the same, but `checkProblem` refuses it (a candidate within
-   the limits below `minScore`). Either:
-   - keep the example's bytes (they are the equivalence check with
-     solver) until step 7, and have the Python example say why it
-     doesn't call `checkProblem`, or call it on another problem
-     (recommended: the check with solver stays one comparison of two
-     outputs for as long as the searches are being changed); or
-   - give the example a `minScore` of −50 now. Its output then differs
-     from solver's from the archive on, the check narrows to the stage's
-     lines, and the change joins the list above.
-
-   Step 5 didn't need the answer: the Python example mirrors
-   `docs/example-class`, which has `minScore` −50 and passes
-   `checkProblem`. The question is now only whether `docs/example`
-   itself should follow the manual's rule.
-9. **Which D example the Python one must equal** (step 5). The plan said
-   `docs/example`; that can't be, because its learning spec is its own
-   and a problem behind the C interface has the class's. Step 5 added
-   `docs/example-class` and compares with that. The other way would be
-   to let a foreign problem choose its learning spec's layout (which
-   targets, one breach or two), so that a Python `Beam` could be given
-   `docs/example`'s. Not done: it would shape the interface around one
-   example. Say if you want it.
+   manual's own rule, so `checkProblem` would refuse it. Decided
+   2026-11-13: `docs/example` keeps its bytes until step 7 (they are the
+   equivalence check with solver, one comparison of two outputs), and
+   step 7 gives it a `minScore` of −50. Its output then differs from
+   solver's from the archive on, the check narrows to the stage's lines,
+   and the change joins "Changes a migrating project will meet".
+9. **Which D example the Python one must equal** (step 5). Decided
+   2026-11-13: `docs/example-class`, as step 5 built it. The plan had
+   said `docs/example`; that can't be, because its learning spec is its
+   own and a problem behind the C interface has the class's. The other
+   way, letting a foreign problem choose its learning spec's layout
+   (which targets, one breach or two) so that a Python `Beam` could be
+   given `docs/example`'s, is not done: it would shape the interface
+   around one example.
 
 ## How to work
 

@@ -20,18 +20,34 @@
             ],
             "dflags": [
                 "-fvisibility=hidden",
-                "-dllimport=none",
-                "-link-defaultlib-shared=false",
                 "-boundscheck=on"
+            ],
+            "dflags-windows": [
+                "-dllimport=none",
+                "-link-defaultlib-shared=false"
+            ],
+            "dflags-posix": [
+                "-link-defaultlib-shared=true"
+            ],
+            "lflags-posix": [
+                "-rpath=$$ORIGIN"
             ]
         },
         {
             "name": "unchecked",
             "targetType": "dynamicLibrary",
             "dflags": [
-                "-fvisibility=hidden",
+                "-fvisibility=hidden"
+            ],
+            "dflags-windows": [
                 "-dllimport=none",
                 "-link-defaultlib-shared=false"
+            ],
+            "dflags-posix": [
+                "-link-defaultlib-shared=true"
+            ],
+            "lflags-posix": [
+                "-rpath=$$ORIGIN"
             ]
         },
         {

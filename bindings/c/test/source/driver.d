@@ -17,7 +17,7 @@
 ///     driver [path to the library]        default: ../solver2.dll, ../libsolver2.so
 module driver;
 
-import core.stdc.stdio : printf;
+import core.stdc.stdio : _IONBF, printf, setvbuf, stdout;
 import core.stdc.stdlib : exit, free, malloc;
 import core.stdc.string : memcmp, strstr;
 
@@ -373,6 +373,9 @@ else
 
 extern (C) int main(int argc, char** argv)
 {
+    // Unbuffered, so that a crash doesn't take the lines before it along:
+    // into a pipe (dub's, CI's) they would wait in a buffer and be lost.
+    setvbuf(stdout, null, _IONBF, 0);
     const(char)* path = argc > 1 ? argv[1] : defaultLibrary.ptr;
     immutable size_t functions = load(path);
     printf("%s: all %d functions of solver2.h found\n", path, cast(int) functions);
