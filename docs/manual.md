@@ -1,23 +1,8 @@
-# solver: developer manual
+# solver2: developer manual
 
-> **In solver2 this is still solver's manual**, as of solver commit
-> `ae68dbb`, with the package and module names changed to `solver2`
-> (`import solver2.problem;`), but for what solver2 has changed so far:
-> [Dynamic problems](#dynamic-problems), the archive's `minScore` as a
-> value known at run time (under [Running](#running)), and
-> [Bounds checks](#bounds-checks). The C interface and the Python module
-> aren't in this manual yet: [`bindings/c/README.md`](../bindings/c/README.md)
-> with its header, and [`bindings/python/README.md`](../bindings/python/README.md),
-> describe them. [`docs/example-class`](example-class/source/app.d) is the
-> worked example on the class route.
-> Where it says solver, read solver2. Step 7
-> of the [work plan](work-plan.md) brings it to solver2's state and adds
-> the sections on Python and on migrating from solver.
-
-solver is a deterministic black-box optimiser for D, built with LDC. You
-describe a problem: genes in [0, 1], an evaluation type of your own,
-an objective to maximise, and limits in three tiers. solver searches it
-with two tools:
+solver2 is a deterministic black-box optimiser written in D, built with
+LDC. You describe a problem: genes in [0, 1], an objective to maximise,
+and limits in three tiers. solver2 searches it with two tools:
 
 - **A CMA-ES stage** (`solver2.stage`) finds the best candidate from a
   start point. It stops early when progress stalls, and a learned model
@@ -32,38 +17,55 @@ Both tools are deterministic. The same problem, seed and options give the
 same bits on any thread count of one platform, provided the problem keeps
 the rules in [Determinism](#determinism). Across platforms runs differ.
 
-This manual describes solver main as of 2026-10-29: the extraction from
-pleaser finished (solver#1 to #8), CI on Linux and Windows (#10), the
-checkpoint template (#11) and `solver2.detmath` (#12). Everything here was
-checked against that code. The worked example in
-[`docs/example`](example/source/app.d) builds and runs against it, and CI
-runs it on Linux and Windows.
-[Gaps and caveats](#gaps-and-caveats) lists what solver doesn't do yet and
-the traps in the current API. Read it before you rely on a feature.
+A problem can be written in three ways, and all three run the same
+searches:
+
+| Route | The problem is | Use it when | Worked example |
+|---|---|---|---|
+| Compile time | A D struct with an evaluation type of your own; the searches are templates over it ([Writing a problem](#writing-a-problem)) | The project is in D and knows its problem when it is built. Calls inline, and evaluations keep your type. | [`docs/example`](example/source/app.d) |
+| The class | A subclass of `DynamicProblem`, run through plain functions ([Dynamic problems](#dynamic-problems)) | The problem is chosen, built or loaded at run time | [`docs/example-class`](example-class/source/app.d) |
+| Python, or C | A Python class, or data and one function, over solver2's shared library ([Interfacing with Python](#interfacing-with-python)) | The evaluation is written in another language | [`bindings/python/examples/beam.py`](../bindings/python/examples/beam.py) |
+
+solver2 is the next version of
+[solver](https://github.com/x21-dev/solver), the optimiser extracted from
+pleaser, and adds the second and third routes to it. A project on solver
+needs no change; [Migrating from solver](#migrating-from-solver) says
+what moving one takes.
+
+This manual describes solver2 `main` as of 2026-11-13. Everything here
+was checked against that code. The three worked examples build and run
+against it, and CI runs them, with every test, on Linux and Windows.
+[Gaps and caveats](#gaps-and-caveats) lists what solver2 doesn't do yet
+and the traps in the current API. Read it before you rely on a feature.
 
 Contents:
 
-1. [Adding solver to a project](#adding-solver-to-a-project)
+1. [Adding solver2 to a project](#adding-solver2-to-a-project)
 2. [The model: genes, evaluations, limits, ranking](#the-model)
 3. [Writing a problem](#writing-a-problem)
 4. [A CMA-ES stage](#a-cma-es-stage)
 5. [The archive](#the-archive)
 6. [A learned model](#a-learned-model)
 7. [Stopping, saving and resuming](#stopping-saving-and-resuming)
-8. [Lower-level pieces](#lower-level-pieces)
-9. [Determinism](#determinism)
-10. [Performance](#performance)
-11. [Gaps and caveats](#gaps-and-caveats)
-12. [Module reference](#module-reference)
-13. [References](#references)
+8. [Interfacing with Python](#interfacing-with-python)
+9. [Lower-level pieces](#lower-level-pieces)
+10. [Determinism](#determinism)
+11. [Performance](#performance)
+12. [Migrating from solver](#migrating-from-solver)
+13. [Gaps and caveats](#gaps-and-caveats)
+14. [Module reference](#module-reference)
+15. [References](#references)
 
 ---
 
-## Adding solver to a project
+## Adding solver2 to a project
 
-solver is a dub **source library** (`"targetType": "sourceLibrary"`). Your
-project compiles solver's modules together with its own, so calls into
-solver can inline like calls within one package. Add it as a dependency:
+This section is for a D project. From Python, see
+[Setting up](#setting-up).
+
+solver2 is a dub **source library** (`"targetType": "sourceLibrary"`). Your
+project compiles solver2's modules together with its own, so calls into
+solver2 can inline like calls within one package. Add it as a dependency:
 
 ```json
 "dependencies": {
@@ -71,27 +73,28 @@ solver can inline like calls within one package. Add it as a dependency:
 }
 ```
 
-Use a path dependency (pleaser checks solver out at `../solver`) or a git
-dependency with a pinned commit. solver isn't on the dub registry.
+Use a path dependency (a checkout beside your project, at `../solver2`)
+or a git dependency with a pinned commit. solver2 isn't on the dub
+registry.
 
 Requirements:
 
 - **LDC only.** `solver2.ensemble` imports `ldc.simd`, so DMD and GDC can't
   build any module that imports it: `solver2.ensemble`, `solver2.model`, or
-  anything that imports those. solver is developed with LDC 1.42.0.
-- No other dependencies. solver uses Phobos and `ldc.simd` only.
-- solver has no `package.d`. Import the modules you need by name:
+  anything that imports those. solver2 is developed with LDC 1.42.0.
+- No other dependencies. solver2 uses Phobos and `ldc.simd` only.
+- solver2 has no `package.d`. Import the modules you need by name:
   `import solver2.problem; import solver2.stage; import solver2.archive;`
   and so on.
 
-Build flags are your project's. solver adds none. pleaser builds with
+Build flags are your project's. solver2 adds none. pleaser builds with
 `--build=release-native`. If you change the target CPU, check that the
 floating-point results stay identical across the machines you need
 (see [Determinism](#determinism)). A release build leaves array bounds
 checks out of most of solver2's code; see
 [Bounds checks](#bounds-checks) to turn them on or off.
 
-Run solver's own tests with:
+Run solver2's own tests with:
 
 ```
 dub test --compiler=ldc2
@@ -102,6 +105,9 @@ Build and run the worked example with:
 ```
 cd docs/example && dub run --compiler=ldc2 --build=release
 ```
+
+`docs/example-class` is the same example on the class route, and runs the
+same way.
 
 ---
 
@@ -124,7 +130,7 @@ and the progress reports.
 
 ### Evaluations
 
-You choose the evaluation type, `P.Eval`. solver never looks inside it.
+You choose the evaluation type, `P.Eval`. solver2 never looks inside it.
 It reads it only through your problem's members: `scored`, `objective`,
 `breach` and `descriptors`. `P.Eval` must be a **value type**: a copy must
 not alias anything your problem changes later. The archive copies an elite
@@ -240,9 +246,13 @@ such as a model's training data.
 
 ## Writing a problem
 
-A problem is a compile-time concept, not a class. The searches are
-templates over `P`, so every call into your problem is direct and can
-inline. `isProblem!P` checks the required members.
+A problem is a compile-time concept: the searches are templates over
+`P`, so every call into your problem is direct and can inline.
+`isProblem!P` checks the required members. A problem that must be chosen
+at run time is a class instead (see
+[Dynamic problems](#dynamic-problems)), and one written in Python a
+Python class (see [Interfacing with Python](#interfacing-with-python));
+both run through the same templates.
 
 ### Required members
 
@@ -320,14 +330,21 @@ immutable double[3] v = [w * r > 200 ? w * r - 200 : 0, w < 2 ? 2 - w : 0, r > 4
 e.breach = breachOf(limits[], v[]);
 ```
 
-`ConstraintSpec.group` is a free label for your own cause counts. solver
+`ConstraintSpec.group` is a free label for your own cause counts. solver2
 doesn't read it.
 
 ### The worked example's problem
 
 [`docs/example/source/app.d`](example/source/app.d) has a two-gene problem,
 `Beam`. It has one limit in each tier, cause counts, descriptors, a
-fingerprint and a `noFeasibleSeed` hint. Start from a copy of it.
+fingerprint and a `noFeasibleSeed` hint. Start from a copy of it. Its
+archive starts its thresholds at −50, below the lowest value a beam
+within its limits can have (−48.25, at width 2 and rate 100).
+
+[`docs/example-class`](example-class/source/app.d) is the same problem as
+a class, and
+[`bindings/python/examples/beam.py`](../bindings/python/examples/beam.py)
+the same in Python.
 
 ### Dynamic problems
 
@@ -413,7 +430,9 @@ auto run = runArchive(p, [best.genes], ao);     // p's grid, ranking and minScor
 ```
 
 `startGenes()` is each gene's `neutral` value, or the middle of its range
-where it has none.
+where it has none. [`docs/example-class`](example-class/source/app.d) is
+the worked example on this route: a pre-screened stage, the archive with
+a model, saved, loaded and resumed.
 
 #### The entry points
 
@@ -646,14 +665,14 @@ archive [6], the best candidate found in each cell of a grid over the
 descriptors, with candidates ranked by how far they beat their cell's
 threshold. CMA-MAE builds on CMA-ME [2], which it becomes at `alpha` 1.
 
-**What solver adds: going after cells not discovered yet.** CMA-MAE
+**What solver2 adds: going after cells not discovered yet.** CMA-MAE
 explores indirectly. A new cell scores high once a candidate lands in it
 (its improvement counts from `minScore`), and as thresholds rise in
 well-visited cells the emitters drift to less-visited ones: once the
 thresholds have caught up, or on a flat objective, CMA-MAE is a descent
 on the archive's density histogram [1, Theorem 5.4]. Both depend on
 candidates landing near the edge of what has been found; nothing points
-an emitter at a cell that no candidate has reached. solver's explorers
+an emitter at a cell that no candidate has reached. solver2's explorers
 do: each takes the empty cell nearest the occupied ones as its target and
 ranks its candidates by their distance to it (`grid.distance`), until it
 reaches the cell or gives it up. Where the improvers refine what the
@@ -663,7 +682,7 @@ problem that only wants the best value in each cell already found can
 set `explorers` to 0.
 
 The explorers, the constraint tiers and the infeasible restarts are
-solver's additions, from pleaser (see
+solver2's additions, from pleaser (see
 [Where the rules come from](#where-the-rules-come-from)).
 
 ### Grids
@@ -704,12 +723,13 @@ pleaser's character grid is an example.
 ```d
 import solver2.archive;
 
-alias A = Archiving!(Beam, BinnedGrid);         // P, G, O = ArchiveOptions, N = 0, minScore = 0
+alias A = Archiving!(Beam, BinnedGrid, ArchiveOptions, 0, -50);     // P, G, O, N, minScore
 ArchiveOptions ao = {evals: 4000, emitters: 4, explorers: 2, lambda: 8, seed: 9};
 A.Run run = A.runArchive(p, grid, seeds, ao);
 ```
 
-`Archiving!(P, G, O, N, minScore)` is a template of functions.
+`Archiving!(P, G, O, N, minScore)` is a template of functions; `O`
+defaults to `ArchiveOptions`, and `N` and `minScore` to 0.
 `P` must satisfy `hasDescriptors!P` and `G` must satisfy `isGrid!G`. It
 has these members:
 
@@ -756,7 +776,9 @@ A run goes like this:
   `Elite!E[N]` by value. That makes `Run` large; read
   [Performance](#performance) before you use it.
 - `minScore` is where every cell's threshold starts, and the zero of
-  `qdScore`. Set it at or below the lowest feasible value.
+  `qdScore`. Set it at or below the lowest feasible value: a candidate
+  whose value is below it can't beat its cell's threshold. The worked
+  example's −50 is below its lowest value, −48.25.
 
 **`minScore` known only at run time.** The archive keeps it as a field,
 `run.archive.minScore`, which starts as the template's argument. A
@@ -824,7 +846,7 @@ value alone; at 1 a threshold is its cell's best value, CMA-ME [2].
   of its cells gets more of them. The derivation assumes they spread
   evenly over the cells and a constant objective; the paper conjectures it
   holds for convex ones.
-- **Your run's length** (solver's rule of thumb, not the paper's): a cell
+- **Your run's length** (solver2's rule of thumb, not the paper's): a cell
   can be offered at most about `evals` ÷ cells candidates in a run. Keep
   1 / `alpha` a fraction of that, or the thresholds hardly move and the
   run behaves as at 0. pleaser's 0.1 with 75 cells and 8000 evaluations:
@@ -884,12 +906,12 @@ negative. Under their former names, `RESTART_GENERATIONS`,
   a chosen direction of descriptor space and restart when they stop
   improving the archive. An explorer instead picks the empty cell to
   reach (see [The archive](#the-archive)).
-- So the guidance below follows from how solver's code works and from
+- So the guidance below follows from how solver2's code works and from
   pleaser's runs, not from published results.
 
 #### The papers' configuration
 
-To run solver as close to CMA-MAE as it gets [1]:
+To run solver2 as close to CMA-MAE as it gets [1]:
 
 ```d
 ArchiveOptions ao;
@@ -900,7 +922,7 @@ ao.rules.minSigma = 1e-11;            // pyribs' "basic" step-size limit
 ao.rules.infeasibleGenerations = size_t.max;   // a window that never fills: no infeasible restarts
 ```
 
-pyribs' default rule instead is `idleGenerations = 1`. solver's
+pyribs' default rule instead is `idleGenerations = 1`. solver2's
 convergence test is the step size alone, without the condition-number and
 flat-ranking tests, and a problem with limits ranks breaches as
 [Ranking](#ranking) says, where the paper folds penalties into the
@@ -1085,6 +1107,11 @@ struct Beam
   archive asks for them, a stage ignores them). It's also called from
   several threads at once. Add headroom here to make predictions err
   towards infeasible.
+- **For a problem with soft limits, learn the value**, the objective less
+  the soft breach: a prediction is ranked by its objective alone, with
+  no soft tier to subtract (see [gap 3](#gaps-and-caveats)).
+  `DynamicProblem`'s default spec learns the value. `Beam` above learns
+  the objective, so its model doesn't see what its soft limit costs.
 
 ### Using it
 
@@ -1147,11 +1174,12 @@ fails:
 
 ### To a file
 
-solver gives you the state as plain data and leaves **the file format to
+solver2 gives you the state as plain data and leaves **the file format to
 you**. It has no serialiser, by design (see [gap 1](#gaps-and-caveats)):
 a file format is a project's own choice. This section is a template to
 copy into your project and adapt instead, the code the worked example
-runs.
+runs. (From Python a run saves itself as bytes: see
+[Stopping, saving and resuming from Python](#stopping-saving-and-resuming-from-python).)
 
 #### What to save
 
@@ -1170,7 +1198,8 @@ the archive yourself, thresholds, `alpha` and `minScore` included. A
 resumed run doesn't reset `alpha` from the options. A file written
 before `Archive` had its `minScore` field (by solver) lacks it; read with
 the template below, the field keeps the template argument's value, which
-is where that archive's thresholds started. `LearnedModel.save` is versioned
+is where that archive's thresholds started (see
+[Saved states](#saved-states)). `LearnedModel.save` is versioned
 and holds the training data and the ensemble. `restore` refuses bytes
 from another run size or shape, and leaves the model as it was when it
 does.
@@ -1464,7 +1493,7 @@ uninterrupted run's, bit for bit.
   checkpoint holds in `Saved`, one field per thing to save. Anything your
   problem keeps between iterations (its own counters, a schedule) goes in
   `Saved` too, as plain data.
-- **Adding a field** (to `Saved`, or when a solver upgrade adds one to
+- **Adding a field** (to `Saved`, or when a solver2 upgrade adds one to
   `RunState`, `Archive` or `ArchiveOptions`) needs no new version. An
   older file lacks it, and the field keeps the default it has in the
   `Saved s;` the reader starts from. Give a field you add a default
@@ -1503,10 +1532,10 @@ uninterrupted run's, bit for bit.
   A field whose type changed without a bump is refused when its bytes
   don't fit the new type (`"of another type"`). One of the same size
   (`int` to `float`) isn't caught: bump the version.
-- **solver upgrades**: a field solver adds reads as its default, and
+- **solver2 upgrades**: a field solver2 adds reads as its default, and
   nothing promises that default means "as before". A resumed run is only
-  guaranteed to be the uninterrupted run, bit for bit, on the solver it
-  was saved with. If that matters, put your solver revision in the
+  guaranteed to be the uninterrupted run, bit for bit, on the solver2 it
+  was saved with. If that matters, put your solver2 revision in the
   fingerprint.
 - **Platforms**: a checkpoint loads on any platform, but resumes bit for
   bit only on the one it was saved on; elsewhere it goes on as that
@@ -1535,6 +1564,457 @@ add them to `Saved` as fields.
 
 ---
 
+## Interfacing with Python
+
+A problem written in Python runs through the same searches. They run in
+D, in solver2's shared library ([`bindings/c`](../bindings/c/README.md));
+the Python module ([`bindings/python/solver2`](../bindings/python/solver2/__init__.py))
+is `ctypes` and numpy over it, with no compiled part of its own, so it
+isn't tied to a Python version. CI runs its tests on Linux and Windows
+with the newest Python, and on Linux with Python 3.10, the oldest tested.
+
+```python
+import numpy as np
+import solver2
+
+class Beam(solver2.Problem):
+    genes = [solver2.Gene("width", 1, 10, neutral=5),
+             solver2.Gene("rate", 0.1, 100, neutral=1, scale="log")]
+    limits = [solver2.Limit("load", "hard"),
+              solver2.Limit("rate_cap", "soft", weight=0.05)]
+    axes = [solver2.Axis("width", [3, 5, 7], "nmwW", width=2),
+            solver2.Axis("rate", [1, 10, 40], "slfF", width=10)]
+    min_score = -50
+
+    def evaluate(self, genes, feasible_only):
+        w, r = self.physical(genes).T
+        violations = np.column_stack([np.where(w * r > 200, w * r - 200, 0.0),
+                                      np.where(r > 40, r - 40, 0.0)])
+        objective = 10 - (w - 7) * (w - 7) / 4 - (r - 30) * (r - 30) / 100
+        return objective, violations, np.column_stack([w, r])
+
+problem = Beam()
+problem.check()
+
+stage = solver2.Stage(problem, lambda_=8, sigma=0.2, budget=800, seed=42)
+stage.run()
+print(stage.best.value, stage.best.descriptors)
+
+archive = solver2.Archive(problem, seeds=[stage.best.genes], evals=4000, seed=9)
+archive.run(report=lambda it: print(it.iteration, it.coverage, it.qd_score))
+elites = archive.elites()
+```
+
+[`bindings/python/examples/beam.py`](../bindings/python/examples/beam.py)
+is the whole worked example: a pre-screened stage, the archive with a
+model, saved, loaded and resumed. It is
+[`docs/example-class`](example-class/source/app.d) in Python, and prints
+the same lines, bit patterns included; a test holds it to that. The
+module's docstrings are the reference; this section says how the pieces
+fit and what to know. The rest of the manual applies as it stands: the
+model of [genes, limits and ranking](#the-model), the options of
+[a stage](#a-cma-es-stage) and of [the archive](#the-archive), and the
+rules of [Determinism](#determinism).
+
+### Setting up
+
+1. Build the library, with LDC 1.42.0, in `bindings/c`:
+
+   ```
+   dub build --compiler=ldc2 --build=release
+   ```
+
+2. Put `bindings/python` on Python's path (`sys.path`, or `PYTHONPATH`)
+   and `import solver2`. It needs numpy and a 64-bit Python.
+
+There is no package to install with pip (see
+[Gaps and caveats](#gaps-and-caveats)). The module looks for
+`solver2.dll` (`libsolver2.so` on Linux) in this order:
+
+1. the file named by the environment variable `SOLVER2_LIBRARY`;
+2. beside the module, in `solver2/`;
+3. in `bindings/c` of the repository the module is in, which is where
+   dub builds it.
+
+So in a checkout nothing needs copying; elsewhere, copy the library into
+`solver2/`. The library has the D runtime linked in and needs no other
+file beside it. The module and the library must be of the same interface
+version, and the import fails with a message that says so when they
+aren't. `solver2.library_path` is the file that was loaded,
+`solver2.abi` the interface version, and `solver2.checked` whether the
+library checks array bounds (see
+[Bounds checks in the library](#bounds-checks-in-the-library)).
+
+### A problem in Python
+
+A problem is a subclass of `solver2.Problem`: its description as class
+attributes, and an `evaluate`. The description is read once, when the
+problem is first used.
+
+| Attribute | Default | Meaning |
+|---|---|---|
+| `genes` | none | The searched parameters: `Gene(name, lo, hi, neutral=nan, scale="linear")`. Gene 0 is `lo` and gene 1 is `hi`; `neutral` is where a search starts (NaN: the middle); `scale` is `"linear"`, `"log"` (needs `lo > 0`) or `"integer"`. |
+| `limits` | none | `Limit(name, tier="hard", weight=1.0, group=None)`, in the order of `evaluate`'s violations. `tier` is `"hard"`, `"terminal"` or `"soft"` (see [Limits: three tiers](#limits-three-tiers)); `weight` is a soft limit's cost per unit over. |
+| `axes` | none | The archive's grid, one `Axis(name, edges, letters, nan_bin=0, width=1.0)` per descriptor (see [Grids](#grids)). A problem without axes runs stages only. |
+| `ranking` | the library's (100, 50, 10) | `Ranking(hard_offset, terminal_offset, bound_penalty)`. Set it when your values reach the offsets: see [Setting the offsets](#setting-the-offsets). |
+| `min_score` | 0 | The value's lower bound, where the archive's thresholds start: at or below the lowest value (the objective less the soft breach) a candidate within the limits can have. |
+| `prediction_headroom` | 0 | How far over a limit a model's prediction may be before it counts as a breach. |
+| `fingerprint` | `{}` | Names and values of your own (a version, a setting) that a saved run must match to be loaded on this problem. The description itself is checked as well. |
+
+**`evaluate(self, genes, feasible_only)`** gets a whole batch (a stage's
+population, or every emitter's in an archive iteration): an array with
+one row of genes per candidate, its own copy. It returns three arrays,
+one row per candidate:
+
+- the objectives, higher is better. NaN means not scored, which a
+  candidate over a hard limit may be when `feasible_only` is true (the
+  searches always pass true);
+- the violations, one column per limit: how far over, 0 within, never
+  negative. `None` for a problem without limits;
+- the descriptors, one column per axis. `None` without axes.
+
+The library adds each tier's violations up itself (as `breachOf` does),
+so the order of the sum and its bits are fixed.
+
+- **Genes come as sampled** and may lie outside [0, 1].
+  `self.physical(genes)` clamps them and maps them over their ranges,
+  for one gene vector or a whole batch.
+- **The same genes must give the same bits whatever the batch** (see
+  [Determinism in Python](#determinism-in-python)).
+- **`problem.check(rows=8, seed=1)`** is `checkProblem` (see
+  [Dynamic problems](#dynamic-problems)): it evaluates the start genes,
+  both corners and `rows` random rows, twice, in another order and
+  alone, and raises a `solver2.Error` that says what is wrong, a
+  candidate within the limits below `min_score` included. Run it once on
+  a new problem.
+
+Also on a problem: `dimension` (the number of genes), `cells` (the
+grid's), `start` (the genes a search starts from when given none),
+`cell_code(cell)` (a cell's name, one letter per axis) and `close()`.
+
+Underneath, the problem is a [`DynamicProblem`](#dynamic-problems) on
+the D side, so what that section says of the class route holds here. Its
+learning spec is the class's default; a Python problem can't give its
+own, because the model's threads never call back into Python.
+
+### A stage from Python
+
+```python
+stage = solver2.Stage(problem, lambda_=8, sigma=0.2, budget=800, seed=42)
+end = stage.run(report=lambda g: print(g.generation, g.best))
+best = stage.best                         # None while no candidate is within the limits
+print(end.generations, end.stalled, best.value, best.genes, stage.causes)
+```
+
+`Stage(problem, start=None, model=None, **options)`. The options are
+[`StageOptions`](#a-cma-es-stage)' fields in snake case, as keywords
+(`lambda_` for `lambda`, which Python reserves), less `ranking`, which
+is the problem's. `lambda_`, `sigma` and `budget` have no defaults.
+
+- **`run(budget=None, report=None)`** runs until the budget is spent,
+  the stage stalls, or the report stops it, and returns a `StageResult`:
+  `generations`, `evaluations`, `finished`, `stalled`, `stopped`,
+  `feasible`, `best_value`. Called again, it goes on.
+- **`report`** is called after each generation with a `StageGeneration`:
+  `generation`, `evaluations`, `best`, `population_best`, `sigma`,
+  `infeasible`, `sampled`, `predicted_feasible`. A true return stops the
+  stage there.
+- **`stage.best`** is a `Candidate`: `genes` (in [0, 1]), `value`,
+  `objective`, `scored`, `hard`, `terminal`, `soft`, `violations` and
+  `descriptors`.
+- **`stage.result`** is where the stage stands, and **`stage.causes`**
+  the candidates over each limit so far, by the limit's name.
+- **To chain stages**, start the next from `stage.best.genes`. Each stage
+  has a best of its own: the D route's `Best` carried across stages
+  isn't in the interface.
+
+### The archive from Python
+
+```python
+archive = solver2.Archive(problem, seeds=[best.genes], evals=4000, emitters=4, lambda_=8, seed=9)
+end = archive.run(report=lambda it: print(it.iteration, it.coverage, it.qd_score))
+e = archive.elites()
+for cell in archive.diverse(3, 4):
+    print(problem.cell_code(cell), e.value[cell], e.descriptors[cell])
+```
+
+`Archive(problem, seeds=None, model=None, **options)`. `seeds` is one
+gene vector or several (the problem's start when None). The options are
+[`ArchiveOptions`](#options)' fields in snake case, less `ranking`;
+`rules` is a dict of [`ArchiveRules`](#restart-and-explorer-rules)'
+fields in snake case (`rules={"idle_generations": 8}`).
+
+- **`run(evals=None, report=None)`** runs until `evals` evaluations
+  beyond the seeds are spent, or the report stops it, and returns an
+  `ArchiveResult`: `cells`, `coverage`, `evaluations`,
+  `seed_evaluations`, `iterations`, `lambda_`, `started`, `finished`,
+  `stopped`, `qd_score`, `best_score`, `best_cell` (None while the
+  archive is empty), `restarts_idle`, `restarts_infeasible`,
+  `restarts_converged`, `reached`, `abandoned`. The first call evaluates
+  the seeds, and raises a `solver2.Error` when none is within the
+  limits.
+- **`report`** is called after each iteration (every emitter's
+  generation, not each emitter's as on the D route) with an
+  `ArchiveIteration`: `iteration`, `evaluations`, `coverage`,
+  `qd_score`, `best_score`, `improved`, `new_cells`, `restarts`. A true
+  return stops the run there.
+- **`elites()`** gives every cell at once, as an `Elites` of arrays with
+  cell `c` at index `c`: `occupied`, `value`, `found`, `genes`,
+  `objective`, `scored`, `hard`, `terminal`, `soft`, `violations`,
+  `descriptors`. An empty cell's numbers are NaN.
+- **`thresholds`** is each cell's threshold, **`causes`** the candidates
+  over each limit, **`result`** where the run stands, and
+  **`diverse(within, count)`** is [`selectDiverse`](#results).
+
+### A learned model from Python
+
+```python
+model = solver2.Model(problem, 5, threads=4)
+archive = solver2.Archive(problem, seeds=[best.genes], model=model, evals=4000, seed=9,
+                          surrogate_pool=4, surrogate_from=3, surrogate_epochs=5, surrogate_aim=True)
+```
+
+`Model(problem, seed, threads=0, **options)` is a
+[`LearnedModel`](#a-learned-model) on the class's default learning spec:
+from the genes it learns the value, the hard and the terminal breach,
+and the descriptors. Its options are `members`, `hidden`, `batch`,
+`learning_rate` and `l2`.
+
+- A run with a model needs `surrogate_pool` above 0, and an archive
+  without one must leave it at 0.
+- `threads` are worker threads of the model's own, for training and
+  predicting. They never call `evaluate`, and their number doesn't
+  change the bits.
+- A model serves one stage or archive at a time, and keeps what it
+  learned in one for the next. `model.rows` is the number of evaluations
+  it has learned from.
+- `model.close()` stops its threads; a model also works in a `with`
+  statement, as a stage and an archive do.
+
+### Stopping, saving and resuming from Python
+
+A report that returns true stops a run after that generation or
+iteration, and `run` called again goes on. A run stopped and gone on
+with ends as the one that never stopped, bit for bit, and a larger
+`budget` or `evals` extends a finished one.
+
+`save()` gives a stage or an archive as bytes, its model's state
+included, and `load` makes a run from them:
+
+```python
+first = solver2.Archive(problem, seeds=[best.genes], model=solver2.Model(problem, 5), **options)
+first.run(report=lambda it: it.iteration == 10)
+with open("run.state", "wb") as f:
+    f.write(first.save())
+
+with open("run.state", "rb") as f:
+    run = solver2.Archive.load(problem, f.read(), model=solver2.Model(problem, 5))
+run.run()                                  # ends as the run that never stopped
+```
+
+- **The model** given to `load` must be made as the saved run's was: the
+  same seed and options (its `threads` may differ). `load` restores its
+  state. A run saved without a model loads without one.
+- **The problem** must have the saved run's fingerprint and description
+  (genes, limits, axes, ranking, `min_score`); `load` raises a
+  `solver2.Error` that says what differs.
+- **The bytes** are the library's own format, versioned, and not a file
+  the D checkpoint template of [To a file](#to-a-file) reads. What that
+  section says of upgrades and platforms holds: a run resumes bit for
+  bit on the platform and the library it was saved with.
+- **Writing the file** is yours: write through a temporary file and a
+  rename, so a stop in mid-write leaves the last one whole.
+
+### Errors and exceptions
+
+- **`solver2.Error`** (a `RuntimeError`) is the library refusing a call:
+  its message says why. A wrong option's name is a `TypeError`, and
+  arrays of the wrong shape, from you or from `evaluate`, a `ValueError`.
+- **An exception raised in `evaluate` or in a report** stops the run and
+  comes out of `run` as itself, a `KeyboardInterrupt` (Ctrl-C) included.
+- **The run is then left whole**: it and its model are as they were
+  after their last whole generation or iteration. Call `run` again and
+  it ends as the run that never failed, bit for bit. A long run in a
+  notebook survives an interrupt.
+
+### Threads
+
+- **Import the module from the main thread** the first time, or from one
+  that lives as long as the module is used: the D runtime in the library
+  takes that thread for its main one.
+- **Any thread may then use it**, several at once. One call at a time
+  per object: a run, its model and its problem are one object for this,
+  so two runs on one problem must not run at the same time.
+- **`evaluate` and the reports are called on the thread that called
+  `run`.** `ctypes` releases Python's interpreter lock while a search
+  runs and takes it again for each callback, so other Python threads run
+  meanwhile.
+- **A busy Python thread slows the callbacks.** Beside a Python thread
+  that never sleeps, each callback waits for the lock: about 5 ms each
+  (measured: 2600 callbacks in 14 s), which is Python's default switch
+  interval (`sys.setswitchinterval`). The bits are the same.
+- **A thread that has called the library** is paused for a moment, like
+  any D thread, whenever the D garbage collector runs, for as long as it
+  lives.
+
+### Determinism in Python
+
+The searches give the same bits for the same outcomes, on any number of
+the model's threads. Keeping `evaluate` deterministic is yours:
+
+- **Element-wise numpy arithmetic** gives the same bits for the same
+  genes whatever the batch.
+- **A sum over a row** (`ndarray.sum`) is the same from run to run, but
+  isn't added in D's order: a problem that sums that way is
+  deterministic by itself and can't be compared bit for bit with the
+  same problem in D.
+- **BLAS-backed operations** (`dot`, `@`) may change their last bits
+  with their thread count. Avoid them, or pin their threads.
+- **To match a D problem bit for bit**, read the genes through
+  `physical`: it is the library's own mapping, and a log scale goes
+  through the library's `exp` and `log`, where numpy's round otherwise.
+- Runs differ between platforms, as on the D route.
+
+`problem.check()` catches an evaluation that depends on its batch, on
+the rows it tries.
+
+### What Python costs
+
+Measured on Windows with Python 3.15 and LDC 1.42.0 (2026-11-12):
+
+- **A batch's call** costs about 25 µs when `evaluate` computes nothing,
+  and about 55 µs with a numpy evaluation of 8 candidates.
+- **A learned model** is trained before every generation or iteration,
+  in the library: that, not Python, is where a model-guided run spends
+  its time. Give the model `threads`.
+- **The worked example** takes 12.5 s in Python against 7.6 s for the
+  same program in D. 1.7 s of the difference is the library's bounds
+  checks, and most of the rest is the model's state being saved after
+  every iteration, so that a failed evaluation can leave the run whole.
+
+### Bounds checks in the library
+
+The library is built with every array index checked, so a bug on the D
+side comes back as a `solver2.Error` instead of corrupting the Python
+process. That is the `library` configuration, the default. To build
+without the checks:
+
+```
+dub build --compiler=ldc2 --build=release --config=unchecked
+```
+
+Both configurations write the same file, so the last one built is the
+one in place; `solver2.checked` (`solver2_checked()` in C) tells which
+it is. The results are the same bits either way. The checks cost about a
+quarter more time in solver2's own code (see
+[Bounds checks](#bounds-checks)): the Python example takes 12.5 s with
+them and 10.8 s without. Keep them unless a profile says they matter.
+
+### The C interface, for other languages
+
+The Python module is one caller of the shared library; any language that
+calls C can be another.
+[`bindings/c/include/solver2.h`](../bindings/c/include/solver2.h) is the
+interface and its documentation: its opening comment has the rules, and
+each function its own. In short:
+
+- `solver2_init` first, from a thread that outlives the library's use,
+  and `solver2_term` at the end. The library isn't to be started again
+  in the same process.
+- Every other function returns `SOLVER2_OK` or an error code, and
+  `solver2_last_error` gives the message. Nothing is thrown across the
+  boundary.
+- A problem, a model, a stage and an archive are handles. A handle that
+  was freed, or never was one, is an error, not a crash.
+- The problem is data (`solver2_problem_spec`) and one function,
+  `solver2_evaluate_fn`, called once per batch with flat arrays.
+  Returning non-zero from it fails the call with `SOLVER2_CALLBACK`, and
+  the run is left whole.
+- Results are copied into buffers the caller owns.
+- Any thread may call, several at once; one call at a time per object.
+- `solver2_abi()` is the interface's version (`SOLVER2_ABI`, 2 today).
+  Check it against the header a wrapper was written for.
+
+A stage over a one-gene problem, in C:
+
+```c
+#include <stdio.h>
+#include "solver2.h"
+
+/* Maximise 10 - (x - 3)^2, for x in 0 .. 10. */
+static int evaluate(void* context, size_t rows, const double* genes, int feasible_only,
+                    unsigned char* scored, double* objective, double* violations, double* descriptors)
+{
+    solver2_problem* problem = *(solver2_problem**) context;
+    for (size_t k = 0; k < rows; ++k)
+    {
+        double x;
+        solver2_problem_physical(problem, 1, genes + k, &x);    /* clamps, then maps */
+        scored[k] = 1;
+        objective[k] = 10 - (x - 3) * (x - 3);
+    }
+    return 0;
+}
+
+int main(void)
+{
+    const solver2_gene gene = {"x", 0, 10, 5, SOLVER2_LINEAR};
+    solver2_problem* problem = NULL;
+    solver2_stage* stage = NULL;
+    solver2_problem_spec spec;
+    solver2_stage_options options;
+    solver2_stage_result result;
+
+    if (solver2_init() != SOLVER2_OK)
+        return 1;
+    solver2_problem_spec_default(&spec);
+    spec.genes = &gene;
+    spec.gene_count = 1;
+    spec.evaluate = evaluate;
+    spec.context = &problem;
+    solver2_stage_options_default(&options);
+    options.lambda = 8;
+    options.sigma = 0.2;
+    options.budget = 400;
+    options.seed = 1;
+    if (solver2_problem_new(&spec, &problem) != SOLVER2_OK
+        || solver2_stage_new(problem, &options, NULL, NULL, &stage) != SOLVER2_OK
+        || solver2_stage_run(stage, 0, NULL, NULL, &result) != SOLVER2_OK)
+    {
+        fprintf(stderr, "%s\n", solver2_last_error());
+        return 1;
+    }
+    printf("best %.6f after %zu evaluations\n", result.best_value, result.evaluations);
+    solver2_stage_free(stage);
+    solver2_problem_free(problem);
+    return solver2_term();
+}
+```
+
+An archive goes the same way (`solver2_archive_new`,
+`solver2_archive_run`, `solver2_archive_elites`), and so do a model and
+the saved bytes.
+
+**The header, the library and a wrapper must agree.** The header is
+written by hand, and solver2's tests hold both sides to it: the
+binding's own read it with ImportC and fail to build when the D
+declarations differ, and the Python tests parse it and fail when the
+module's `ctypes` declarations do. A wrapper in another language should
+check `solver2_abi()` when it loads the library.
+
+**How the library is built** (`bindings/c/dub.json`): the D runtime is
+linked in statically and only the interface's functions are exported
+(`-link-defaultlib-shared=false -fvisibility=hidden -dllimport=none`),
+so the library loads with nothing beside it and no D installation.
+Building it needs LDC and dub only. Its tests
+([`bindings/c/README.md`](../bindings/c/README.md)) also need a C
+compiler, for ImportC's preprocessor.
+
+**What the interface leaves out** of the D route is in
+[Gaps and caveats](#gaps-and-caveats).
+
+---
+
 ## Lower-level pieces
 
 - **`solver2.cmaes.CmaEs`**: deterministic CMA-ES for minimisation.
@@ -1547,7 +2027,7 @@ add them to `Saved` as fields.
   - Accessors: `stepSize`, `currentMean`, `populationSize`, `generation`,
     `bestFitness`, `bestPoint`.
   - `jacobiEigen` is its eigensolver.
-- **`solver2.rng.SplitMix64`**: the only RNG solver uses, and the one your
+- **`solver2.rng.SplitMix64`**: the only RNG solver2 uses, and the one your
   problem should use for any seeded noise (see
   [Determinism](#determinism)).
   - `next()`, `uniform01()` (53 bits), `bipolar()`.
@@ -1565,7 +2045,7 @@ add them to `Saved` as fields.
   - Plain IEEE arithmetic, no `libm`. Its unittests hold it to reference
     bit patterns, and CI runs them on Linux and Windows.
   - It makes the maths it is used for platform-independent, not a whole
-    run: solver itself still uses `libm` (see
+    run: solver2 itself still uses `libm` (see
     [Determinism](#determinism), item 5).
   - pleaser and its plugins keep their own identical copy,
     `pleaser.detmath`.
@@ -1595,7 +2075,7 @@ add them to `Saved` as fields.
 
 ## Determinism
 
-solver keeps these rules itself:
+solver2 keeps these rules itself:
 
 - Every random draw comes from `SplitMix64`, seeded from the options.
   Emitter `k` draws from its own seed.
@@ -1624,7 +2104,7 @@ Your problem must keep them too:
 5. Runs are the same on any thread count and CPU of one platform, but
    **not across platforms**. LDC turns `exp`, `log`, `pow`, `sin`, `cos`
    and the like into calls to the C maths library, and glibc and the MSVC
-   runtime can round the last bit differently. solver itself calls it
+   runtime can round the last bit differently. solver2 itself calls it
    (CMA-ES's normal samples and step size, the explorers' noise,
    log-scaled genes), and so does almost any objective. A last-bit
    difference flips a ranking sooner or later, and from there the runs
@@ -1646,15 +2126,21 @@ Your problem must keep them too:
    `-mcpu=native` or `-mattr=+fma`); don't add flags such as
    `-fp-contract=fast` or `@fastmath` that change that.
 
+A problem written in Python keeps the same rules with numpy: see
+[Determinism in Python](#determinism-in-python).
+
 ---
 
 ## Performance
 
-- **Inlining**: solver is a source library and the searches are templates
+- **Inlining**: solver2 is a source library and the searches are templates
   over your problem, so `objective`, `breach` and `descriptors` inline.
-  Keep them cheap and `const`.
-- **Threads**: solver never starts threads of its own. Parallelism comes
-  from your `evaluate` and from the `TaskPool` you give `LearnedModel`.
+  Keep them cheap and `const`. On the class route those calls are
+  virtual and each outcome holds three small arrays: nothing next to a
+  real evaluation, noticeable on a microsecond-scale problem.
+- **Threads**: solver2 never starts threads of its own. Parallelism comes
+  from your `evaluate` and from the `TaskPool` you give `LearnedModel`
+  (the shared library makes that pool for a model given `threads`).
   Make `lambda × emitters` a multiple of your thread count, so each archive
   batch fills the pool.
 - **Stack size**: with `N > 0`, `Archive` holds `Elite!E[N]` by value, and
@@ -1728,41 +2214,256 @@ cell count).
 built with bounds checks on: there a bug in D would otherwise corrupt
 the caller's process instead of coming back as an error. It sets the
 flag in its own `dub.json`, so it has a second configuration without it:
-`dub build --compiler=ldc2 --build=release --config=unchecked`.
-`solver2_checked()` tells which build a library is. See
-[`bindings/c/README.md`](../bindings/c/README.md).
+see [Bounds checks in the library](#bounds-checks-in-the-library).
+
+---
+
+## Migrating from solver
+
+solver2 is the next version of
+[solver](https://github.com/x21-dev/solver). It started as solver's code
+at commit `ae68dbb`, with the package and its modules renamed, and adds
+the class route, the C interface and the Python module. The searches are
+the same code.
+
+### Who needs to
+
+Nobody. solver stays as it is, and a project that uses it needs neither
+rewriting nor rebuilding. Move a project when it wants what solver2
+adds: a problem chosen at run time, or Python. solver is frozen by
+default: a bug found in the code both hold is fixed in solver2, and goes
+into solver only when its owner decides so for that bug, because a fix
+that changes bits would invalidate the golden runs of the projects on
+it.
+
+### What stays the same
+
+- The problem concept and its members, required and optional.
+- `StageOptions`, `ArchiveOptions`, `ArchiveRules`, `Ranking` and their
+  defaults.
+- `cmaStage`, `Archiving` and `runArchive`, their parameters and their
+  callbacks; `Best`, `StageRun`, `ArchiveRun`, `RunState`.
+- `LearnedModel`, `Ensemble`, `CmaEs`, `Bytes`, `SplitMix64`, `detmath`.
+- The checkpoint template of [To a file](#to-a-file).
+- The bits: a migrated project's runs are the same, on one platform.
+
+### What changes
+
+1. **The names.** The dub package is `solver2` and every module
+   `solver2.*`. Change the dependency:
+
+   ```json
+   "dependencies": {
+       "solver2": { "path": "../solver2" }
+   }
+   ```
+
+   and the imports: `import solver.problem;` becomes
+   `import solver2.problem;`, and so for `stage`, `archive`, `model`,
+   `ensemble`, `cmaes`, `bytes`, `rng` and `detmath`. That is a search
+   and replace of `solver.` after `import`. Because the names differ, a
+   build can never pick up the wrong library.
+2. **A problem's member named `minScore` is now read by the archive**,
+   as where its thresholds start (see [Running](#running)), and
+   `Archiving`'s `minScore` argument must then stay 0: the build fails
+   otherwise. A project that passes its lower bound as the template's
+   argument, as pleaser does, goes on working unchanged.
+3. **`Archive` has one more field, `minScore`**, after `alpha`. A run's
+   bits are the same. What a project may meet:
+   - A checkpoint written by the template gains the field. One written
+     with solver lacks it and still reads; see
+     [Saved states](#saved-states).
+   - A save format of the project's own (pleaser's `elites.state`) is
+     untouched: an archive it builds has the template argument's value.
+   - An `Archive` built as a struct literal with every field in order
+     would need the new one. With `N` 0 it has a constructor, so only an
+     `N > 0` archive could be written so.
+4. **A subclass of `DynamicProblem`** (solver had the class, without
+   what makes it complete):
+   - `genes`, `constraints`, `fingerprint` and `evaluateInto` are
+     `abstract`, so a subclass that lacks one fails where it is
+     constructed.
+   - The class now declares `axes`, `ranking`, `minScore`,
+     `screenPenalty`, `noFeasibleSeed`, `adoptCauses`, `featureCount`,
+     `features`, `targetCount`, `targets`, `predicted` and
+     `predictionHeadroom`, and, final, `grid`, `startGenes`, `newCauses`
+     and `countCauses`. A subclass with a member of one of those names
+     must `override` it, or rename it when it is final.
+   - Its outcomes are checked: one within the limits needs `scored`, an
+     objective and its descriptors.
+5. **The worked example's archive starts its thresholds at −50**, below
+   its lowest value, where solver's starts them at 0 against the
+   manual's own rule. Its stage prints what solver's example prints; its
+   archive's lines differ.
+
+### The same bits
+
+A migrated project gives byte-identical runs on one platform: the names
+changed, the arithmetic didn't. To prove it for your project, make a
+golden run before and after:
+
+1. On solver, run with a fixed seed and write the result to a file with
+   every bit: a checkpoint, or each elite's genes, value and threshold
+   as hexadecimal floats (`%a`). Rounded decimals hide a last-bit
+   difference.
+2. Migrate, build with the same compiler and flags, run the same.
+3. Compare the two files byte for byte.
+
+Do it on each platform you ship: runs differ between platforms on either
+library (see [Determinism](#determinism)), so a golden run is one
+platform's.
+
+What was checked for solver2 itself, on Windows with LDC 1.42.0: before
+change 5, the worked example printed solver's lines, and copies of both
+examples changed to print the final archive as hexadecimal floats gave
+identical output (every threshold, every elite's value, genes and
+`found`, and the QD score).
+
+### Saved states
+
+- **A checkpoint written by the template with solver reads in
+  solver2.** The magic string is your project's own, so it doesn't
+  change. The file lacks `Archive.minScore`, and the field keeps the
+  template argument's value, which is where that archive's thresholds
+  started. Checked on Windows (2026-11-13): a checkpoint written by
+  solver's example at `ae68dbb` after 10 iterations was loaded by
+  solver2's example (given solver's magic string) and resumed to the
+  uninterrupted run's archive, bit for bit.
+- **A `LearnedModel`'s bytes** (`save`, `restore`) have the same format.
+- **A format of your own** reads as before: it builds its runs from
+  plain data, and that data's meaning didn't change.
+- **Don't add a `minScore` member to a problem with saved runs** unless
+  it gives the value those runs started from: a resumed run checks that
+  the archive's `minScore` equals the problem's.
+
+### Moving a compile-time problem to the class
+
+A compile-time problem needs no change to run in solver2. Move one to
+[the class](#dynamic-problems) when it must be chosen, built or loaded
+at run time, or handed to code that knows nothing about it.
+
+| The compile-time problem | The class |
+|---|---|
+| `struct P` with its own `Eval` | `final class P : DynamicProblem`; the evaluation is `Outcome` |
+| `dimension()` | `genes()`, a `GeneSpec` per gene: the dimension is their number |
+| `evaluate`, returning `Eval[]` | `evaluateInto(genes, scoring, outcomes)`, filling `outcomes` |
+| `scored`, `objective`, `breach` | fields of each `Outcome` |
+| `descriptorCount`, `descriptors` | `Outcome.descriptors`, and `axes()` |
+| `Causes`, `newCauses`, `countCauses` | `constraints()` and `Outcome.violations`: the counts are `CauseCounts`, per limit |
+| `fingerprint` (a convention) | `fingerprint()` (required) |
+| `featureCount`, `features`, `targetCount`, `targets`, `predicted` | defaults that learn the value, the breaches and the descriptors; override `targets` and `predicted` together for your own |
+| The grid, the ranking and the start genes, written at the call site | `axes()`, `ranking()` and each gene's `neutral` |
+| `Archiving`'s `minScore` argument | `minScore()` |
+| `cmaStage`, `Archiving!(P, G).runArchive` | `runStage`, `runArchive` (`solver2.dynamic`) |
+| `Best!(P.Eval)`, `A.Run`, `LearnedModel!P` | `DynamicBest`, `DynamicRun`, `DynamicModel` |
+
+[`docs/example`](example/source/app.d) and
+[`docs/example-class`](example-class/source/app.d) are one problem both
+ways; compare them.
+
+What the move costs:
+
+- **Your own evaluation type.** `Outcome` has the fields the searches
+  read and `targets`; anything else an evaluation carried (pleaser's
+  per-candidate measurements) has no place in it.
+- **An archive held by value** (`N > 0`): the entry points use `N` 0.
+- **Inlined calls**: a few virtual calls and three small arrays per
+  candidate, which only a microsecond-scale evaluation notices.
+- **Saved runs**: a checkpoint holds the evaluations by type, so one
+  written on the compile-time route doesn't load on the class route.
+
+The bits carry over when the arithmetic and the learning spec do: a
+subclass gives the bits of the same problem as a struct, and solver2's
+tests hold it to that. With a learned model, the class's default spec
+must be what the struct's was, or the model's picks differ: that is why
+the two worked examples print different numbers.
 
 ---
 
 ## Gaps and caveats
 
-These are true of solver main on 2026-10-29. Each
-one says what it costs you and how to work around it today.
+These are true of solver2 `main` on 2026-11-13. Each one says what it
+costs you and how to work around it today.
 
-1. **No checkpoint API, by design.** solver has `RunState`,
-   `CmaEs.State`, `LearnedModel.save` and `Bytes`, and nothing that writes
-   a run to a file. The intended route is the template in
-   [To a file](#to-a-file): copy `checkpoint.d` into your project and
+The searches:
+
+1. **No checkpoint API, by design.** solver2 has `RunState`,
+   `CmaEs.State`, `LearnedModel.save` and `Bytes`, and nothing in the
+   core that writes a run to a file. The intended route is the template
+   in [To a file](#to-a-file): copy `checkpoint.d` into your project and
    adapt it. It versions the file and stays readable when a field is
    added. `isSaveable`'s `saveEval`/`loadEval` are a convention for a
-   project's own format; nothing in solver calls them.
+   project's own format; nothing in solver2 calls them. From Python and
+   C a run is saved as bytes in the library's own format.
 2. **The terminal tier on stage pre-screening.** `StageModel.predictScore`
    returns one violation, which the stage ranks as hard. `LearnedModel`
    reports `hard + terminal` there, so a predicted terminal breach ranks as
    a hard one in a pre-screened stage. The archive's model interface keeps
    the tiers.
-3. **LDC only, and no dub registry package.** See
-   [Adding solver to a project](#adding-solver-to-a-project).
-4. **Runs differ between platforms.** solver's own CMA-ES and explorers
+3. **A prediction is ranked by its objective, without a predicted soft
+   breach.** An evaluation is ranked by its value (the objective less
+   the soft breach); a `Predicted` has no soft tier to subtract. So a
+   learning spec for a problem with soft limits should learn the value
+   as its objective. The class's default spec does. The worked example's
+   `Beam` in `docs/example` learns the objective, as solver's example
+   did, so its model doesn't see the cost of its soft limit.
+4. **LDC only, and no dub registry package.** See
+   [Adding solver2 to a project](#adding-solver2-to-a-project).
+5. **Runs differ between platforms.** solver2's own CMA-ES and explorers
    use the C maths library, whose last bits differ between glibc and the
    MSVC runtime, so the same run takes different paths on Linux and
    Windows. This is accepted, not planned to change: keep goldens per
    platform (see [Determinism](#determinism)). `solver2.detmath` has
-   platform-identical `log2` and `exp2` for a problem's own use.
-5. **Evaluation log, survey and model test tools stay in pleaser.**
+   platform-identical `log2` and `exp2` for a problem's own use. macOS
+   isn't tested.
+6. **Evaluation log, survey and model test tools stay in pleaser.**
    pleaser's `evals.bin` log, random survey and offline surrogate tests
    are mix-specific and stay there. Use the `evaluated` callback to build
    your own log.
+7. **Nothing checks the ranking's offsets against your values**, on any
+   route: see [Setting the offsets](#setting-the-offsets).
+8. **`StageEnd.rise` is NaN unless the stage stalled**, so two `StageEnd`
+   never compare equal with `==`. Compare their fields.
+
+The class route:
+
+9. **`checkProblem` can't prove a problem sound.** It catches an
+   evaluation that isn't deterministic, or a `minScore` that is too
+   high, only on the rows it tries.
+10. **The entry points use `BinnedGrid`, `ArchiveOptions` and `N` 0.** A
+    grid or an options type of your own, or an archive held by value,
+    means calling the templates over `DynamicProblem` yourself (see
+    [The entry points](#the-entry-points)).
+
+Python and the C interface:
+
+11. **The library owns the loop.** You give an `evaluate` and the search
+    calls it; there is no way to ask for candidates and tell their
+    results, as pycma and pyribs offer. It could be added without
+    rewriting the searches and isn't planned. To run your own code
+    between generations, use the report.
+12. **The Python module is a folder, not a wheel.** Nothing installs it
+    with pip: build the library and put `bindings/python` on Python's
+    path (see [Setting up](#setting-up)).
+13. **What the interface leaves out of the D route**: the archive's
+    `evaluated` callback and its per-emitter reports (a report is per
+    iteration), [focused runs](#focused-runs), a grid other than
+    `BinnedGrid`, a learning spec of the problem's own (a model learns
+    the class's defaults), `screenPenalty`, the `noFeasibleSeed` hint,
+    and a `Best` carried from one stage to the next (start the next
+    stage from the last one's best genes).
+14. **The library can't be started again** in one process after
+    `solver2_term`. The Python module never ends it.
+15. **Only 64-bit, and only the Pythons CI runs**: the newest, and 3.10
+    on Linux. The module uses nothing newer than 3.7, but older versions
+    aren't tested.
+16. **A saved run's bytes are the library's own format**, not the
+    checkpoint template's: a run saved from Python doesn't load in a D
+    program that uses the template, nor the reverse.
+17. **A model's state is saved after every generation or iteration** of
+    a run from Python or C, so that a failed evaluation can leave the
+    run whole. That is most of what the Python example costs over the D one
+    (see [What Python costs](#what-python-costs)).
 
 ---
 
@@ -1780,6 +2481,14 @@ one says what it costs you and how to work around it today.
 | `solver2.bytes` | `Bytes` |
 | `solver2.rng` | `SplitMix64` |
 | `solver2.detmath` | `log2d`, `exp2d`, `log2v`, `exp2v`, `select`, `V`, `VL` |
+
+Outside the core, in the same repository:
+
+| Where | What it holds |
+|---|---|
+| `bindings/c` | The shared library (`solver2.dll`, `libsolver2.so`): `include/solver2.h`, the interface, and `source/solver2c`, the exported functions over `solver2.dynamic` |
+| `bindings/python/solver2` | The Python module: `Problem`, `Gene`, `Limit`, `Axis`, `Ranking`, `Stage`, `Archive`, `Model`, `Error`, and the records `Candidate`, `Elites`, `StageGeneration`, `StageResult`, `ArchiveIteration`, `ArchiveResult` |
+| `docs/example`, `docs/example-class`, `bindings/python/examples/beam.py` | The worked example on each route |
 
 ---
 

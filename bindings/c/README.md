@@ -9,6 +9,10 @@ model, and a run saved and resumed as bytes. The Python module
 [`include/solver2.h`](include/solver2.h) is the interface and its
 documentation: read its opening comment for the rules (start the library
 first, error codes, handles, buffers, threads), then each function's.
+The developer manual's
+[The C interface, for other languages](../../docs/manual.md#the-c-interface-for-other-languages)
+has a summary of the rules, a small program in C and what the interface
+leaves out.
 
 ## Building
 

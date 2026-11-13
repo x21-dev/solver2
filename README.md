@@ -1,45 +1,48 @@
 # solver2
 
-The next version of [solver](https://github.com/x21-dev/solver), the
-deterministic black-box optimiser extracted from
-[pleaser](https://github.com/x21-dev/pleaser): CMA-ES stages and a
-quality-diversity archive (CMA-MAE) over a problem interface, with a
-learned surrogate model.
+A deterministic black-box optimiser written in D: CMA-ES stages and a
+quality-diversity archive (CMA-MAE, with explorers that head for empty
+cells) over a problem interface, with a learned surrogate model. It is
+the next version of [solver](https://github.com/x21-dev/solver), the
+optimiser extracted from [pleaser](https://github.com/x21-dev/pleaser).
 
-solver2 is being built to add two things:
+A problem can be written in three ways, and all three run the same
+searches:
 
-- a problem as a class that need not be known at compile time;
-- a C interface and a Python module over it, so a problem written in
-  Python runs through the D searches.
+| Route | The problem is | Worked example |
+|---|---|---|
+| Compile time | A D struct; the searches are templates over it, so calls inline | [`docs/example`](docs/example/source/app.d) |
+| The class | A subclass of `DynamicProblem`, chosen or loaded at run time, run through plain functions (`solver2.dynamic`) | [`docs/example-class`](docs/example-class/source/app.d) |
+| Python, or C | A Python class, or data and one function, over the shared library in [`bindings/c`](bindings/c/README.md) | [`bindings/python/examples/beam.py`](bindings/python/examples/beam.py) |
 
-[`docs/work-plan.md`](docs/work-plan.md) has the design, the steps and
-where the work stands. solver2 started as solver's code at commit
-`ae68dbb`, with the package and its modules renamed: `solver2.problem`,
-`solver2.stage`, `solver2.archive`, `solver2.model`, `solver2.ensemble`,
-`solver2.cmaes`, `solver2.bytes`, `solver2.rng`, `solver2.detmath`. So
-far it adds the first of the two: `DynamicProblem`, a problem as a class
-that gets what a compile-time problem gets, and `solver2.dynamic`, the
-stage and the archive over it as plain functions (`runStage`,
-`runArchive`); and the second: the C interface, a shared library with
-a header in [`bindings/c`](bindings/c/README.md), and the Python module
-over it in [`bindings/python`](bindings/python/README.md), with which a
-problem written in Python runs through the D searches.
-
-solver itself stays as it is, and the projects that use it need not
-change. The manual will say how to move a project to solver2.
+The [developer manual](docs/manual.md) is the documentation: the model,
+each route, saving and resuming, determinism, performance, what the
+library doesn't do, and how to move a project from solver. solver itself
+stays as it is, and the projects that use it need not change.
 
 Runs are bit-identical on any thread count of one platform, not across
 platforms (the C maths library differs), so keep golden runs per
 platform; see the manual's Determinism section.
 
-solver2 is a source library: a dependent compiles its modules with its
-own, so calls into it inline as calls within one package do.
+## Using it
+
+- **From D**: solver2 is a dub source library with no dependencies, built
+  with LDC (developed with 1.42.0). A dependent compiles its modules with
+  its own. See the manual's "Adding solver2 to a project".
+- **From Python**: build the shared library in `bindings/c`, put
+  `bindings/python` on Python's path and `import solver2`. See
+  [`bindings/python`](bindings/python/README.md) and the manual's
+  "Interfacing with Python".
+
+## Testing
 
 ```
 dub test --compiler=ldc2
 ```
 
-To use it, see the [developer manual](docs/manual.md) and its worked
-example in `docs/example`; `docs/example-class` is the same example as
-a class, and `bindings/python/examples/beam.py` the same in Python. The manual is still solver's, with the module
-names changed.
+runs the core's tests. The examples, the C interface and the Python
+module have their own, listed in [`CLAUDE.md`](CLAUDE.md); CI runs all of
+them on Linux and Windows for every pull request.
+
+[`docs/work-plan.md`](docs/work-plan.md) is the record of how solver2 was
+built: the design, the steps and what each found.
