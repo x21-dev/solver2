@@ -321,7 +321,9 @@ final class ForeignStage
         enforce(s.run.history.length == s.run.generation, "the saved stage lacks its history");
         if (s.run.generation > 0)
             checkState(s.run.es, n);
-        enforce(!s.best.feasible || (s.best.genes.length == n && s.best.eval.descriptors.length == problem.descriptorCount),
+        // solver2_stage_best copies these into the caller's buffers at their own lengths.
+        enforce(!s.best.feasible || (s.best.genes.length == n && s.best.eval.descriptors.length == problem.descriptorCount
+                                     && s.best.eval.violations.length == problem.constraints.length),
                 "the saved stage's best doesn't fit the problem");
         enforce(s.causes.over.length == problem.constraints.length, "the saved stage's cause counts don't fit the problem");
 

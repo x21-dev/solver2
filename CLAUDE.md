@@ -11,8 +11,8 @@ See README.md for a summary and docs/manual.md for the developer manual,
 which documents all three routes (a compile-time problem, the class,
 Python and C), the migration from solver, and, under Gaps and caveats,
 what the library doesn't do. The work that built solver2 is finished and
-released (v0.1.0, 2026-11-13); this file and the manual are the
-hand-over.
+released (v0.1.0, 2026-11-13; v0.2.0, the review's fixes, the same day);
+this file and the manual are the hand-over.
 
 ## Decided by Dev
 
