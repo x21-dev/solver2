@@ -362,7 +362,8 @@ the base class, to the bits of the same problem written as a struct.
 Its `Eval` is `Outcome`: `scored`, `objective`, `violations` (one per
 limit, 0 within), `breach`, `descriptors` and `targets`.
 
-**A subclass must give** four members:
+**A subclass must give** four members, and its `axes` when its outcomes
+have descriptors:
 
 ```d
 final class Field : DynamicProblem
@@ -370,6 +371,7 @@ final class Field : DynamicProblem
     override const(GeneSpec)[] genes() const { return spec[]; }
     override const(ConstraintSpec)[] constraints() const { return limits[]; }
     override const(string[2])[] fingerprint() const { return [["problem", "field 1"]]; }
+    override const(Axis)[] axes() const { return bins[]; }      // one per descriptor
 
     override void evaluateInto(const(double[])[] genes, Scoring scoring, Outcome[] outcomes)
     {
@@ -388,8 +390,10 @@ final class Field : DynamicProblem
 ```
 
 Each outcome needs its `breach`; when it is within the hard and terminal
-limits, also `scored`, its `objective` and its `descriptors`; and its
-`violations` if you want cause counts.
+limits, also `scored`, its `objective` and its `descriptors`, one per
+axis; and its `violations` if you want cause counts. A problem without
+`axes` (a stage needs none) leaves the descriptors empty: an outcome
+with descriptors the problem has no axes for is refused.
 
 **A subclass may override** the rest. The searches look for a problem's
 optional members on its static type, which here is the base class, so
@@ -1627,7 +1631,7 @@ class Beam(solver2.Problem):
               solver2.Limit("rate_cap", "soft", weight=0.05)]
     axes = [solver2.Axis("width", [3, 5, 7], "nmwW", width=2),
             solver2.Axis("rate", [1, 10, 40], "slfF", width=10)]
-    min_score = -50
+    min_score = -52            # below the lowest value within the limits: -51
 
     def evaluate(self, genes, feasible_only):
         w, r = self.physical(genes).T
