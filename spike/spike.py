@@ -1,4 +1,4 @@
-"""Step 1 of docs/work-plan.md, a spike: Python calls D.
+"""The spike that came before the C interface: Python calls D.
 
 Loads the spike's shared library with ctypes, gives it a problem whose
 evaluation is a Python function, and prints what spike-native prints with

@@ -50,6 +50,3 @@ dub test --compiler=ldc2
 runs the core's tests. The examples, the C interface and the Python
 module have their own, listed in [`CLAUDE.md`](CLAUDE.md); CI runs all of
 them on Linux and Windows for every pull request.
-
-[`docs/work-plan.md`](docs/work-plan.md) is the record of how solver2 was
-built: the design, the steps and what each found.

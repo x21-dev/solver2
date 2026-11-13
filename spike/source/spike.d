@@ -1,4 +1,4 @@
-/// Step 1 of docs/work-plan.md, a spike: a shared library that runs
+/// The spike that came before the C interface: a shared library that runs
 /// solver2's CMA-ES stage over a problem whose evaluation is a C callback,
 /// so that Python can supply it. Throwaway code: it answers whether the D
 /// runtime, its collector and its threads behave inside a Python process,
