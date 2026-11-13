@@ -1059,7 +1059,22 @@ release; Dev reads and publishes it. No release has been made yet.
 **Checked on Windows** (LDC 1.42.0, Python 3.15.0): the archive made by
 `package.py`, unpacked elsewhere; `check.py` on it with the lines of
 `docs/example-class`, the same 16; the driver against the archive's
-`solver2.dll`. The workflow itself can only be shown on CI.
+`solver2.dll`.
+
+**Checked on CI**, on the step's pull request (3), where the workflow and
+the Linux packaging ran for the first time, and passed as written:
+
+- the Linux archive built in the 22.04 container, with the driver and
+  the 30 Python tests there;
+- in clean containers the library found both runtime libraries in the
+  archive's own folder, the driver passed, and the example ran, with the
+  system's numpy: 1.21.5 and Python 3.10 on 22.04, 1.26.4 and Python
+  3.12 on 24.04. On 22.04 it printed the build's 16 lines. On 24.04 it
+  printed the same bits too, this time; the workflow doesn't require
+  it, since a glibc may change its rounding;
+- the Windows archive on a runner without LDC, the build's 16 lines.
+
+Not shown yet: the draft release itself, which only a tag starts.
 
 **Not done**
 
