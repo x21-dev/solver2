@@ -71,6 +71,12 @@ and elsewhere copy the library into `solver2/`. The module and the
 library must be of the same interface version; the import says so when
 they aren't.
 
+On Linux the library uses LDC's two shared runtime libraries
+(`libdruntime-ldc-shared.so.112` and `libphobos2-ldc-shared.so.112` for
+LDC 1.42). It finds them in the LDC that built it; on another machine,
+copy them from LDC's `lib` folder to beside `libsolver2.so`. On Windows
+`solver2.dll` needs nothing beside it.
+
 ## Testing
 
 In this folder, with the library built:

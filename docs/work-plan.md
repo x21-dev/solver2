@@ -306,6 +306,8 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
   runtime (919 KB), exports only the functions marked `export`, and
   loads. On Linux LDC also links the shared runtime into a shared library
   by default, so the same flag is expected to be needed there (untested).
+  (Wrong for Linux: there the static runtime is a fault, and the library
+  uses the shared one. See step 7.)
 - **The runtime doesn't start by itself.** A call before `init`
   (`rt_init`) is an access violation. No `DllMain` is needed.
 - **Errors stay on their side.** A D exception is caught at the exported
@@ -345,6 +347,7 @@ python spike.py --checks          # also --stress, --probe, --numpy, --unattache
 #### What it changes in the design
 
 - **Build the binding with the three flags above**, on both platforms.
+  (On Windows only, since step 7.)
 - **Bounds checks on in the binding, and only there** (`-boundscheck=on`;
   Dev's decision, 2026-11-12): a real problem's evaluation dwarfs the
   26%, and a bug then reaches Python as an error instead of corrupting
@@ -834,6 +837,8 @@ pthread key (two foreign threads at once, twelve one after another),
 and the Python module on 3.15.2 and 3.10.22, its example printing what
 the D class-route example prints. What was written from the
 documentation and marked untested in steps 4 and 5 needed no change.
+(Not so: the runtime linked statically was a fault on Linux that these
+runs happened to miss. Step 7 found it and has the fix.)
 
 One thing the Linux run on Python 3.10 showed, in the module: reading an
 archive's elites went through numpy's view of a `ctypes` array of
@@ -887,7 +892,7 @@ two new sections, the date and Gaps and caveats true on 2026-11-13.
   what changes (from the list below), how to prove the same bits with a
   golden run, saved states, and moving a compile-time problem to the
   class, with a table of what becomes what and what the move costs.
-- **Gaps and caveats**: 17 items, in three groups (the searches, the
+- **Gaps and caveats**: 18 items, in three groups (the searches, the
   class route, Python and the C interface). New: a prediction ranked
   without its soft breach (found in step 2), `StageEnd.rise` (step 3),
   `checkProblem`'s limits, what the entry points fix, the library owning
@@ -927,9 +932,61 @@ frozen by default; the manual's Python section changes with
 
 Checked on Windows with LDC 1.42.0 and Python 3.15.0: the core's tests,
 the example's tests and its run, the binding's tests, the library and
-the driver, the Python tests. The manual's anchors and file links were
+the driver, the Python tests; and on Linux by CI. The manual's anchors and file links were
 checked by a throwaway script (every `](#...)` has its heading, no
 heading twice).
+
+**Found by CI on this step's pull request: the library crashed on Linux,
+about once in 50 runs.** The driver segfaulted in the job "ubuntu-latest,
+Python 3.x" (exit code -11, nothing printed), while the other Linux job
+passed the same step. The step changes no code of the library, so the
+fault was there since step 4, and five earlier CI runs had missed it.
+
+- **Hunted on CI**, there being no Linux on this machine: a temporary
+  branch, `debug-driver-linux`, with a workflow of its own (on a push to
+  `debug-**`): the library built with `DFLAGS=-g`, core dumps on
+  (`ulimit -c unlimited`, `kernel.core_pattern` set to a file), the
+  driver run up to 250 times in each of six jobs, and on the first
+  failure what it had printed and `gdb -batch -ex "thread apply all bt"`
+  on the core. All six jobs crashed, at runs 21 to 154, all at the same
+  place.
+- **Where**: the main thread, in the archive with a model, in a
+  collection: `Gcx.collectRoots` under `rt.sections_elf_shared.scanTLSRanges`
+  under `thread_scanAll`. Not the foreign threads, which a first guess
+  had blamed (druntime's `thread_attachThis` allocates before it
+  registers the thread; a stress test of 7,200 attaches on Windows found
+  nothing, and that guess stays unproven either way).
+- **Why**: druntime's `getTLSRange`, with a static runtime on Linux x86
+  (`Static_Linux_X86_Any` in LDC 1.42's `rt/sections_elf_shared.d`),
+  takes a thread's TLS block to be the `size` bytes just below its
+  thread control block. That holds when the D code is the executable.
+  In a shared library the block is elsewhere, so every collection
+  scanned memory that wasn't the library's, and the library's own TLS
+  was never scanned. On the main thread the wrong range can run off the
+  start of a mapping, depending on where the loader put things: hence
+  one run in 50.
+- **The fix**: on Linux the library uses LDC's shared runtime, which
+  finds TLS through the loader (`bindings/c/dub.json`:
+  `-link-defaultlib-shared=true` and a run path of `$ORIGIN` for posix;
+  Windows as before). The same hunt on the fixed library: six jobs of
+  250 runs, 1500 in all, no crash. `ldd` shows the two libraries, and
+  the run path is `$ORIGIN` and then LDC's `lib`.
+- **What it costs**: on Linux the library is no longer one file. It needs
+  `libdruntime-ldc-shared.so.112` and `libphobos2-ldc-shared.so.112`,
+  found in the LDC that built it, or copied beside it. The manual, both
+  READMEs and its gap 18 say so. Step 1's "the runtime must be linked
+  statically" was shown on Windows and holds there; its guess that Linux
+  would need the same flag was wrong, and step 6's first green runs on
+  Linux were luck.
+- **So that it stays found**: CI checks on Linux that the library uses
+  the shared runtime (`ldd`), and the driver's output is unbuffered, so
+  a crash no longer takes the lines before it along.
+- **Not checked**: whether, with the shared runtime, the TLS of a thread
+  attached by `thread_attachThis` is scanned (druntime keeps the list of
+  loaded libraries per thread, and fills it for threads it starts). The
+  binding keeps nothing of the collector's in thread-local storage (the
+  last error is a plain buffer), so nothing depends on it today; keep it
+  so.
 
 **Decided here, for Dev to overrule**
 

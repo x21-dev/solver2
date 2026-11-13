@@ -1637,10 +1637,20 @@ There is no package to install with pip (see
    dub builds it.
 
 So in a checkout nothing needs copying; elsewhere, copy the library into
-`solver2/`. The library has the D runtime linked in and needs no other
-file beside it. The module and the library must be of the same interface
+`solver2/`. The module and the library must be of the same interface
 version, and the import fails with a message that says so when they
-aren't. `solver2.library_path` is the file that was loaded,
+aren't.
+
+**What the library needs beside it.** On Windows, nothing: the D runtime
+is linked into `solver2.dll`. On Linux, `libsolver2.so` uses LDC's two
+shared runtime libraries, `libdruntime-ldc-shared.so` and
+`libphobos2-ldc-shared.so` (with their version suffix, `.112` for LDC
+1.42). It looks for them beside itself and then in the `lib` folder of
+the LDC that built it, so on the machine that built it nothing needs
+doing. To use the library elsewhere, copy the two files from LDC's `lib`
+folder to where `libsolver2.so` is.
+
+ `solver2.library_path` is the file that was loaded,
 `solver2.abi` the interface version, and `solver2.checked` whether the
 library checks array bounds (see
 [Bounds checks in the library](#bounds-checks-in-the-library)).
@@ -2002,11 +2012,29 @@ declarations differ, and the Python tests parse it and fail when the
 module's `ctypes` declarations do. A wrapper in another language should
 check `solver2_abi()` when it loads the library.
 
-**How the library is built** (`bindings/c/dub.json`): the D runtime is
-linked in statically and only the interface's functions are exported
-(`-link-defaultlib-shared=false -fvisibility=hidden -dllimport=none`),
-so the library loads with nothing beside it and no D installation.
-Building it needs LDC and dub only. Its tests
+**How the library is built** (`bindings/c/dub.json`): only the
+interface's functions are exported (`-fvisibility=hidden`), and the D
+runtime is linked differently on each platform:
+
+- **Windows**: linked in statically
+  (`-link-defaultlib-shared=false -dllimport=none`), so `solver2.dll`
+  loads with nothing beside it and no D installation. Python doesn't
+  search `PATH` for a DLL's own dependencies, so the shared runtime
+  wouldn't be found there.
+- **Linux**: LDC's shared runtime (`-link-defaultlib-shared=true`), with
+  a run path of the library's own folder and LDC's `lib` (see
+  [Setting up](#setting-up) for what to copy elsewhere).
+
+**Don't link the D runtime statically into a shared library on Linux.**
+With LDC 1.42, a static runtime takes each thread's thread-local storage
+to be the block just below the thread's control block, which is true
+only when the D code is the executable. In a shared library the
+collector then scans memory that isn't the library's, and never scans
+what is: solver2's library built that way crashed in a collection about
+once in 50 runs of its test driver, always on the main thread. CI checks
+that the library on Linux uses the shared runtime.
+
+Building the library needs LDC and dub only. Its tests
 ([`bindings/c/README.md`](../bindings/c/README.md)) also need a C
 compiler, for ImportC's preprocessor.
 
@@ -2464,6 +2492,9 @@ Python and the C interface:
     a run from Python or C, so that a failed evaluation can leave the
     run whole. That is most of what the Python example costs over the D one
     (see [What Python costs](#what-python-costs)).
+18. **On Linux the library isn't one file.** It needs LDC's two shared
+    runtime libraries, found in the LDC that built it or beside the
+    library (see [Setting up](#setting-up)). On Windows it is one file.
 
 ---
 

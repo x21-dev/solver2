@@ -48,6 +48,15 @@ problem, the class, Python and C) and the migration from solver.
   its first call, and detached by a hook when it ends. Don't attach and
   detach per call: with this druntime that corrupts memory (the work
   plan's step 4 says how).
+- The shared library links the D runtime statically on Windows and uses
+  LDC's shared runtime on Linux (`bindings/c/dub.json`). Never link it
+  statically on Linux: the collector then scans the wrong thread-local
+  storage and crashes about once in 50 runs of the driver (the work
+  plan's step 7 says how it was found). CI checks it with `ldd`.
+- A crash that shows on Linux only can be hunted on CI: a temporary
+  branch named `debug-...` with a workflow of its own that loops the
+  failing program with core dumps on and prints gdb's backtraces (step
+  7 has the recipe). Ask before pushing it, and delete it afterwards.
 - The compile-time route must keep solver's bits. The worked example's
   stage prints what solver's at `ae68dbb` prints on one platform; its
   archive's lines differ only because its `minScore` is −50 (with

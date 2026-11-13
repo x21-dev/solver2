@@ -22,11 +22,24 @@ LDC 1.42.0, in this folder:
 dub build --compiler=ldc2 --build=release
 ```
 
-That is the `library` configuration: the D runtime linked into the
-library, so it needs no other file beside it, and **bounds checks on**,
-so a bug on the D side comes back as an error and a message instead of
-corrupting the caller's process. `solver2_checked()` tells which build a
-library is.
+That is the `library` configuration: **bounds checks on**, so a bug on
+the D side comes back as an error and a message instead of corrupting
+the caller's process. `solver2_checked()` tells which build a library
+is.
+
+**What the library needs beside it.** On Windows, nothing: the D runtime
+is linked into `solver2.dll`. On Linux, `libsolver2.so` uses LDC's two
+shared runtime libraries, `libdruntime-ldc-shared.so` and
+`libphobos2-ldc-shared.so` (with their version suffix, `.112` for LDC
+1.42). It looks for them beside itself and then in the `lib` folder of
+the LDC that built it, so on the machine that built it nothing needs
+doing. To use the library elsewhere, copy the two files from LDC's `lib`
+folder to where `libsolver2.so` is.
+The runtime is not linked statically on Linux because a static D runtime
+in a shared library has the collector scan the wrong thread-local
+storage there, and crash now and then; the manual's
+[The C interface, for other languages](../../docs/manual.md#the-c-interface-for-other-languages)
+says more.
 
 To build without the checks (the evaluation of a real problem dwarfs
 what they cost):

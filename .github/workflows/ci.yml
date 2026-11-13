@@ -83,6 +83,15 @@ jobs:
         working-directory: bindings/c
         run: dub build --compiler=ldc2 --build=release
 
+      # A D runtime linked statically into a shared library has the
+      # collector scan the wrong thread-local storage on Linux, and crash
+      # about once in 50 runs of the driver: the library must use LDC's
+      # shared runtime there.
+      - name: The library uses the shared D runtime
+        if: runner.os == 'Linux'
+        working-directory: bindings/c
+        run: ldd libsolver2.so | grep druntime-ldc-shared
+
       - name: Driver
         working-directory: bindings/c/test
         run: dub run --compiler=ldc2
