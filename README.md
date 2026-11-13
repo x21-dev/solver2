@@ -29,10 +29,17 @@ platform; see the manual's Determinism section.
 - **From D**: solver2 is a dub source library with no dependencies, built
   with LDC (developed with 1.42.0). A dependent compiles its modules with
   its own. See the manual's "Adding solver2 to a project".
-- **From Python**: build the shared library in `bindings/c`, put
-  `bindings/python` on Python's path and `import solver2`. See
+- **From Python**: unpack a
+  [release](https://github.com/x21-dev/solver2/releases) (Linux and Windows, x86-64; no D
+  compiler needed), or build the shared library in `bindings/c`; put the
+  folder on Python's path and `import solver2`. See
   [`bindings/python`](bindings/python/README.md) and the manual's
   "Interfacing with Python".
+- **From C or another language**: the same library, with its header, from
+  a release or from `bindings/c`.
+
+solver2 is proprietary: using it needs a licence granted individually.
+See [`LICENSE.md`](LICENSE.md).
 
 ## Testing
 

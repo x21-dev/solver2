@@ -7,7 +7,7 @@ change.
 
 Written 2026-11-12. All its steps were done by 2026-11-13: from here it
 is the record of how solver2 was built, and the place for what comes
-next ("After step 7", below).
+next ("What is left open", below).
 
 ## Where the work stands
 
@@ -21,6 +21,7 @@ next ("After step 7", below).
 | 5. The Python module | done 2026-11-12; on Linux since step 6 |
 | 6. CI | done 2026-11-12: Linux and Windows, every push and pull request |
 | 7. The manual | done 2026-11-13 |
+| 8. Releases | done 2026-11-13: the workflow drafts a release for a tag; none made yet |
 
 solver2 is solver's code with the package and modules renamed, plus the
 completed `DynamicProblem` (step 2), the archive's `minScore` as a value
@@ -1003,9 +1004,74 @@ fault was there since step 4, and five earlier CI runs had missed it.
   migrating project meets it. It stays on the list below as a change
   within solver2.
 
-### After step 7
+### 8. Releases (2026-11-13)
 
-Nothing is planned. What the steps left open, should it be wanted:
+Dev's decision, after step 7 made the Linux library need LDC's runtime
+beside it: distribute built archives as GitHub releases, the library
+bundled with the runtime libraries it was built against. Ubuntu 22.04 is
+to stay supported even when `ubuntu-latest` moves on. The licence stays
+proprietary, with licences granted individually.
+
+**What is there**
+
+- **`release/package.py`** makes the archive for the platform it runs
+  on, from the library built in `bindings/c`:
+  `solver2-<version>-linux-x86_64.tar.gz` or
+  `solver2-<version>-windows-x86_64.zip`. It unpacks to one folder:
+  `solver2/` (the Python module with the library inside it; on Linux
+  LDC's two runtime libraries under the names the library asks for, on
+  Windows the import library `solver2.lib`), `include/solver2.h`,
+  `examples/beam.py`, `README.md` (from `release/README.md`, with the
+  version and the interface version filled in) and `LICENSE.md`. One
+  copy of the library serves Python and C. It refuses a library built
+  without bounds checks, and on Linux one that doesn't use the shared
+  runtime.
+- **`release/check.py`** checks an unpacked archive where it lies, with
+  nothing of the repository: the module loads the archive's own
+  library, the worked example runs to its end, and with `--expected` it
+  prints exactly the lines `docs/example-class` printed where the
+  archive was built.
+- **`.github/workflows/release.yml`**: for a tag `v<version>`, for every
+  pull request, and by hand.
+  - *Linux archive*: built in an `ubuntu:22.04` container on
+    `ubuntu-latest`, with LDC from its own release tarball. So the
+    system built on doesn't depend on which runner images GitHub keeps.
+    The job also runs the driver and the Python tests there, on 22.04's
+    Python 3.10.
+  - *Linux tests*: in `ubuntu:22.04` and `ubuntu:24.04` containers with
+    no LDC and no checkout, with the system's own Python and numpy: the
+    library finds its runtime in the archive's folder (`ldd`), the
+    driver passes against it, and the example runs; on 22.04 to the
+    same bits as where it was built. On 24.04 only to its end: another
+    glibc may round otherwise.
+  - *Windows archive* and its test on a runner without LDC, the example
+    to the same bits.
+  - *Draft release*, for a tag only, once all tests pass: the two
+    archives and notes. A draft, so that publishing is Dev's.
+- **`LICENSE.md`**: proprietary, licences granted individually; and what
+  the releases include of LDC's runtime, under its own licences. The
+  wording is the session's: Dev to read it.
+
+**To make a release**: on `main`, with CI green, `git tag v0.1.0` and
+`git push origin v0.1.0` (Dev's word for both); the workflow drafts the
+release; Dev reads and publishes it. No release has been made yet.
+
+**Checked on Windows** (LDC 1.42.0, Python 3.15.0): the archive made by
+`package.py`, unpacked elsewhere; `check.py` on it with the lines of
+`docs/example-class`, the same 16; the driver against the archive's
+`solver2.dll`. The workflow itself can only be shown on CI.
+
+**Not done**
+
+- A wheel (question 3 stands): the archive is most of the way there.
+- arm64, macOS.
+- The module has no version of its own: a release's version is its tag,
+  in the archive's name and its `README.md`.
+- The archives aren't signed, and have no checksums beyond GitHub's.
+
+### What is left open
+
+Nothing more is planned. What the steps left open, should it be wanted:
 
 - **The equivalence with solver in CI** (step 6): fetch solver at
   `ae68dbb`, run both examples, compare the stage's lines, and the
@@ -1013,7 +1079,8 @@ Nothing is planned. What the steps left open, should it be wanted:
 - **The manual's C program as a tested file**, built and run by CI
   against the library, so that it can't rot.
 - **A wheel** (question 3) and **Python owning the loop** (question 6):
-  decided against for now.
+  decided against for now. Step 8's archives are what a wheel would
+  hold.
 - **A cheaper roll-back for the model** (step 5): forget the rows learned
   since the last whole iteration instead of saving the model each time.
 - **The interface's omissions** (step 4, "Not done, or not exposed"; the

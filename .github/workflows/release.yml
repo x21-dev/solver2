@@ -1,0 +1,297 @@
+name: Release
+
+# Builds the release archives (the shared library with what it needs beside
+# it, the Python module, the header, the example), tests each where there
+# is no D compiler, and, for a tag `v<version>`, puts them in a draft
+# release for Dev to publish.
+#
+# On a pull request and by hand it does all but the release, so that the
+# packaging is tested before a tag is made.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  LDC: 1.42.0
+
+jobs:
+  # ── Linux ───────────────────────────────────────────────────────────────
+
+  # Built in an Ubuntu 22.04 container, whatever `ubuntu-latest` is by
+  # then: a library runs on the C library it was built with and on newer
+  # ones, so the oldest system supported is the one to build on.
+  linux:
+    name: Linux archive (built on Ubuntu 22.04)
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      - name: Install what the build needs
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl xz-utils gcc git python3 python3-pip
+
+      - uses: actions/checkout@v5
+
+      - name: Install LDC
+        run: |
+          curl -fsSL "https://github.com/ldc-developers/ldc/releases/download/v$LDC/ldc2-$LDC-linux-x86_64.tar.xz" | tar -xJ -C /opt
+          echo "/opt/ldc2-$LDC-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.0.0-${GITHUB_SHA::7}"; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Shared library
+        working-directory: bindings/c
+        run: dub build --compiler=ldc2 --build=release
+
+      # The driver, which stays with the test kit: a program with no D
+      # runtime, to load the archive's library where there is no LDC.
+      - name: Driver
+        working-directory: bindings/c/test
+        run: dub run --compiler=ldc2
+
+      - name: Python tests
+        working-directory: bindings/python
+        run: |
+          python3 -m pip install -q numpy
+          python3 -W error::RuntimeWarning -m unittest discover -s tests
+
+      # What the Python example must print from the archive: the D program
+      # it mirrors, here, on the same C library.
+      - name: The example's lines
+        working-directory: docs/example-class
+        run: |
+          dub build --compiler=ldc2 --build=release
+          ./solver2-example-class > expected.txt
+          cat expected.txt
+
+      - name: Package
+        run: python3 release/package.py --version "$VERSION" --out dist
+
+      - name: Test kit
+        run: |
+          mkdir kit
+          cp docs/example-class/expected.txt bindings/c/test/solver2-c-driver release/check.py kit/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-archive
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-kit
+          path: kit/
+          if-no-files-found: error
+
+  # The archive where there is no LDC and no checkout: on the system it was
+  # built on, where the example must print the same bits, and on a newer
+  # one, whose C library may round otherwise.
+  linux-test:
+    name: Linux archive on ${{ matrix.image }}
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: "ubuntu:22.04"
+            exact: true
+          - image: "ubuntu:24.04"
+            exact: false
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install Python and numpy, the system's own
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 python3-numpy
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-archive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-kit
+          path: kit
+
+      - name: Unpack
+        run: |
+          tar -xzf solver2-*-linux-x86_64.tar.gz
+          rm solver2-*-linux-x86_64.tar.gz
+          mv solver2-*-linux-x86_64 unpacked
+          ls -l unpacked unpacked/solver2
+
+      - name: No D compiler here, and the library finds its runtime beside it
+        working-directory: unpacked/solver2
+        run: |
+          if command -v ldc2; then echo "there is an LDC here"; exit 1; fi
+          ldd libsolver2.so
+          if ldd libsolver2.so | grep "not found"; then exit 1; fi
+          ldd libsolver2.so | grep druntime-ldc-shared | grep "$PWD"
+          ldd libsolver2.so | grep phobos2-ldc-shared | grep "$PWD"
+
+      - name: Driver against the archive's library
+        run: |
+          chmod +x kit/solver2-c-driver
+          kit/solver2-c-driver unpacked/solver2/libsolver2.so
+
+      - name: The example from the archive, the same bits
+        if: matrix.exact
+        run: python3 kit/check.py unpacked --expected kit/expected.txt
+
+      - name: The example from the archive
+        if: ${{ !matrix.exact }}
+        run: python3 kit/check.py unpacked
+
+  # ── Windows ─────────────────────────────────────────────────────────────
+
+  windows:
+    name: Windows archive
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install LDC
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-${{ env.LDC }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.0.0-${GITHUB_SHA::7}"; fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Shared library
+        working-directory: bindings/c
+        run: dub build --compiler=ldc2 --build=release
+
+      - name: Driver
+        working-directory: bindings/c/test
+        run: dub run --compiler=ldc2
+
+      - name: The example's lines
+        working-directory: docs/example-class
+        shell: bash
+        run: |
+          dub build --compiler=ldc2 --build=release
+          ./solver2-example-class.exe > expected.txt
+          cat expected.txt
+
+      - name: Package
+        shell: bash
+        run: python release/package.py --version "$VERSION" --out dist
+
+      - name: Test kit
+        shell: bash
+        run: |
+          mkdir kit
+          cp docs/example-class/expected.txt bindings/c/test/solver2-c-driver.exe release/check.py kit/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-archive
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-kit
+          path: kit/
+          if-no-files-found: error
+
+  windows-test:
+    name: Windows archive, without LDC
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Install numpy
+        run: python -m pip install numpy
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-archive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-kit
+          path: kit
+
+      - name: Unpack
+        shell: bash
+        run: |
+          python -c "import glob, zipfile; zipfile.ZipFile(glob.glob('solver2-*-windows-x86_64.zip')[0]).extractall('.')"
+          rm solver2-*-windows-x86_64.zip
+          mv solver2-*-windows-x86_64 unpacked
+          ls -l unpacked unpacked/solver2
+
+      - name: No D compiler here
+        shell: bash
+        run: if command -v ldc2; then echo "there is an LDC here"; exit 1; fi
+
+      - name: Driver against the archive's library
+        shell: bash
+        run: kit/solver2-c-driver.exe unpacked/solver2/solver2.dll
+
+      - name: The example from the archive, the same bits
+        run: python kit/check.py unpacked --expected kit/expected.txt
+
+  # ── The release ─────────────────────────────────────────────────────────
+
+  # A draft: Dev reads it and publishes it.
+  publish:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-test, windows-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-archive
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-archive
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<EOF
+          Built archives of solver2 ${TAG#v}: the shared library with what it needs beside it, the Python module, the C header and the worked example. Unpack one and read its \`README.md\`.
+
+          - \`solver2-${TAG#v}-linux-x86_64.tar.gz\`: Linux x86-64, glibc 2.35 or newer (Ubuntu 22.04 or newer).
+          - \`solver2-${TAG#v}-windows-x86_64.zip\`: Windows x86-64.
+
+          From Python they need a 64-bit Python 3.10 or newer and numpy. No D compiler is needed.
+
+          solver2 is proprietary: see \`LICENSE.md\`. The manual for this release: https://github.com/${GITHUB_REPOSITORY}/blob/${TAG}/docs/manual.md
+          EOF
+          sed -i 's/^          //' notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "solver2 ${TAG#v}" \
+            --notes-file notes.md solver2-*-linux-x86_64.tar.gz solver2-*-windows-x86_64.zip
