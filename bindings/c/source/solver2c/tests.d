@@ -634,8 +634,12 @@ unittest
 
     refused(solver2_stage_new(p, null, null, null, &s), "options is NULL");
     refused(solver2_stage_new(p, &o, null, null, null), "stage is NULL");
-    o.lambda = 0;
-    refused(solver2_stage_new(p, &o, null, null, &s), "needs a population");
+    // A population of one has no better half for CMA-ES to move to.
+    foreach (lambda; [0, 1])
+    {
+        o.lambda = lambda;
+        refused(solver2_stage_new(p, &o, null, null, &s), "needs a population (lambda) of at least 2");
+    }
     o = stageOptions();
     o.sigma = double.nan;
     refused(solver2_stage_new(p, &o, null, null, &s), "needs a step size");
@@ -647,13 +651,37 @@ unittest
     ok(solver2_stage_new(p, &o, start.ptr, null, &s));
     refused(solver2_stage_run(s, 0, null, null, null), "gene 1 not finite");
     ok(solver2_stage_free(s));
-    // A model needs surrogate_pool, and is of its problem.
+    // A model needs surrogate_pool, of 2 at least (with 1 nothing is
+    // pre-screened), and is of its problem.
     auto m = smallModel(p);
-    refused(solver2_stage_new(p, &o, null, m, &s), "needs surrogate_pool above 0");
+    foreach (pool; [0, 1])
+    {
+        o.surrogate_pool = pool;
+        refused(solver2_stage_new(p, &o, null, m, &s), "a stage with a model needs surrogate_pool of at least 2");
+    }
+    o.surrogate_pool = 2;
+    ok(solver2_stage_new(p, &o, null, m, &s));
+    ok(solver2_stage_free(s));
     Calls others;
     auto q = field(&others);
     o = stageOptions(true);
     refused(solver2_stage_new(q, &o, null, m, &s), "of another problem");
+    // The share the model picks is one: from 0 to 1, both included.
+    foreach (share; [-0.1, 1.5, double.nan, double.infinity])
+    {
+        o.surrogate_share = share;
+        refused(solver2_stage_new(p, &o, null, m, &s), "surrogate_share must be from 0 to 1");
+        refused(solver2_stage_new(p, &o, null, null, &s), "surrogate_share must be from 0 to 1");
+    }
+    foreach (share; [0.0, 1.0])
+    {
+        o.surrogate_share = share;
+        ok(solver2_stage_new(p, &o, null, m, &s));
+        solver2_stage_result r;
+        ok(solver2_stage_run(s, 0, null, null, &r));
+        assert(r.finished && r.evaluations == o.budget);
+        ok(solver2_stage_free(s));
+    }
     ok(solver2_model_free(m));
     ok(solver2_problem_free(q));
     ok(solver2_problem_free(p));
@@ -883,6 +911,17 @@ unittest
     const grid = native.grid;
     ok(solver2_archive_diverse(a, 3, 4, cells.ptr, &picked));
     assert(cells[0 .. picked] == selectDiverse(run.archive, grid, 3, 4) && picked > 1 && cells[0] == r.best_cell);
+    // At most `count` of them: the best alone, and none into no room.
+    size_t[2] room = [77, 77];
+    ok(solver2_archive_diverse(a, 3, 1, room.ptr, &picked));
+    assert(picked == 1 && room == [r.best_cell, 77]);
+    room[0] = 77;
+    ok(solver2_archive_diverse(a, 3, 0, room.ptr, &picked));
+    assert(picked == 0 && room == [77, 77]);
+    picked = 9;
+    ok(solver2_archive_diverse(a, 3, 0, null, &picked));
+    assert(picked == 0);
+    refused(solver2_archive_diverse(a, 3, 1, null, &picked), "cells is NULL");
     char[3] code;
     ok(solver2_problem_cell_code(p, cells[0], code.ptr, code.length));
     assert(code[0 .. 2] == grid.code(cells[0]));
@@ -929,6 +968,15 @@ unittest
     o.emitters = 0;
     refused(solver2_archive_new(p, &o, null, 0, null, &a), "needs emitters");
     o = archiveOptions();
+    o.lambda = 1;
+    refused(solver2_archive_new(p, &o, null, 0, null, &a), "needs a population (lambda) of at least 2 per emitter");
+    foreach (share; [-0.1, 1.5, double.nan])
+    {
+        o = archiveOptions();
+        o.surrogate_share = share;
+        refused(solver2_archive_new(p, &o, null, 0, null, &a), "surrogate_share must be from 0 to 1");
+    }
+    o = archiveOptions();
     o.rules.infeasible_share = 0;
     refused(solver2_archive_new(p, &o, null, 0, null, &a), "infeasibleShare");
     o = archiveOptions(true);
@@ -936,6 +984,13 @@ unittest
     o = archiveOptions();
     auto m = smallModel(p);
     refused(solver2_archive_new(p, &o, null, 0, m, &a), "and only then");
+    // With 1 no emitter would be guided: with a model or without.
+    o.surrogate_pool = 1;
+    refused(solver2_archive_new(p, &o, null, 0, m, &a), "surrogate_pool must be 0, or at least 2 with a model");
+    refused(solver2_archive_new(p, &o, null, 0, null, &a), "surrogate_pool must be 0, or at least 2 with a model");
+    o.surrogate_pool = 2;
+    ok(solver2_archive_new(p, &o, null, 0, m, &a));
+    ok(solver2_archive_free(a));
     ok(solver2_model_free(m));
     ok(solver2_problem_free(p));
 }
@@ -1083,6 +1138,224 @@ unittest
     assert(r.finished && bytesOf(a) == whole);
     ok(solver2_archive_free(a));
     ok(solver2_problem_free(p));
+}
+
+/// A report that reads the run it is told of, and saves it.
+private struct Watch
+{
+    solver2_stage* stage;
+    solver2_archive* archive;
+    ubyte[][] saved;
+    bool agreed = true;
+}
+
+private extern (C) int stageWatch(void* context, const(solver2_stage_generation)* g)
+{
+    auto w = cast(Watch*) context;
+    solver2_stage_result r;
+    ok(solver2_stage_get(w.stage, &r));
+    w.agreed &= r.generations == g.generation && r.evaluations == g.evaluations;
+    w.saved ~= bytesOf(w.stage);
+    return 0;
+}
+
+private extern (C) int archiveWatch(void* context, const(solver2_archive_iteration)* it)
+{
+    auto w = cast(Watch*) context;
+    solver2_archive_result r;
+    ok(solver2_archive_get(w.archive, &r));
+    ubyte[16] occupied;
+    double[16] thresholds;
+    size_t[3] over;
+    ok(solver2_archive_elites(w.archive, occupied.ptr, null, null, null, null, null, null));
+    ok(solver2_archive_thresholds(w.archive, thresholds.ptr));
+    ok(solver2_archive_causes(w.archive, over.ptr));
+    size_t held, raised;
+    foreach (c; 0 .. 16)
+    {
+        held += occupied[c];
+        raised += thresholds[c] > fieldMinScore;
+    }
+    w.agreed &= r.started && r.iterations == it.iteration && r.evaluations == it.evaluations
+                && r.coverage == it.coverage && r.qd_score is it.qd_score && r.best_score is it.best_score
+                && held == it.coverage && raised >= held && over[0] > 0;
+    w.saved ~= bytesOf(w.archive);
+    return 0;
+}
+
+unittest
+{
+    // A report finds the run as after the generation or iteration it is
+    // told of, to read and to save: in a run's first call as in a later
+    // one. What it saves, loaded and gone on with, ends as the run that
+    // never stopped.
+    foreach (withModel; [false, true])
+    {
+        {
+            const whole = wholeStage(withModel);
+            Calls calls;
+            auto p = field(&calls);
+            const o = stageOptions(withModel);
+            auto m = withModel ? smallModel(p) : null;
+            Watch watch;
+            ok(solver2_stage_new(p, &o, null, m, &watch.stage));
+            ok(solver2_stage_run(watch.stage, 0, &stageWatch, &watch, null));
+            assert(watch.agreed && watch.saved.length == o.budget / 8 && watch.saved[$ - 1] == whole);
+            foreach (at; [0, 9])
+            {
+                solver2_stage* back;
+                solver2_stage_result r;
+                ok(solver2_stage_load(p, m, watch.saved[at].ptr, watch.saved[at].length, &back));
+                ok(solver2_stage_get(back, &r));
+                assert(r.generations == at + 1 && !r.finished);
+                ok(solver2_stage_run(back, 0, null, null, &r));
+                assert(r.finished && bytesOf(back) == whole);
+                ok(solver2_stage_free(back));
+            }
+            ok(solver2_stage_free(watch.stage));
+            if (m !is null)
+                ok(solver2_model_free(m));
+            ok(solver2_problem_free(p));
+        }
+        {
+            const whole = wholeArchive(withModel);
+            Calls calls;
+            auto p = field(&calls);
+            const o = archiveOptions(withModel);
+            auto m = withModel ? smallModel(p) : null;
+            Watch watch;
+            ok(solver2_archive_new(p, &o, null, 0, m, &watch.archive));
+            // Stopped and gone on with: the first call's reports, then a later call's.
+            ArchiveTrace trace = {stopAt: 6};
+            ok(solver2_archive_run(watch.archive, 0, &archiveWatch, &watch, null));
+            assert(watch.agreed && watch.saved.length == 17 && watch.saved[$ - 1] == whole);
+            foreach (at; [0, 5])
+            {
+                solver2_archive* back;
+                solver2_archive_result r;
+                ok(solver2_archive_load(p, m, watch.saved[at].ptr, watch.saved[at].length, &back));
+                ok(solver2_archive_get(back, &r));
+                assert(r.started && r.iterations == at + 1 && !r.finished && r.evaluations == 1 + 24 * (at + 1));
+                ok(solver2_archive_run(back, 0, null, null, &r));
+                assert(r.finished && bytesOf(back) == whole);
+                ok(solver2_archive_free(back));
+            }
+            ok(solver2_archive_free(watch.archive));
+
+            // A run stopped in its first call reports from its second as from its first.
+            Watch later;
+            solver2_archive_result r;
+            if (m !is null)
+            {
+                ok(solver2_model_free(m));
+                m = smallModel(p);
+            }
+            ok(solver2_archive_new(p, &o, null, 0, m, &later.archive));
+            ok(solver2_archive_run(later.archive, 0, &archiveReport, &trace, &r));
+            assert(r.stopped && r.iterations == 6);
+            ok(solver2_archive_run(later.archive, 0, &archiveWatch, &later, &r));
+            assert(r.finished && later.agreed && later.saved.length == 11 && later.saved == watch.saved[6 .. $]);
+            ok(solver2_archive_free(later.archive));
+            if (m !is null)
+                ok(solver2_model_free(m));
+            ok(solver2_problem_free(p));
+        }
+    }
+}
+
+unittest
+{
+    // A model freed while a run holds it: its threads stop, and the run
+    // goes on with the model, on the caller's thread, to the same bytes.
+    foreach (threads; [0, 2])
+    {
+        Calls calls;
+        auto p = field(&calls);
+        {
+            const o = stageOptions(true);
+            auto m = smallModel(p, threads);
+            solver2_stage* s;
+            ok(solver2_stage_new(p, &o, null, m, &s));
+            StageTrace trace = {stopAt: 10};
+            solver2_stage_result r;
+            ok(solver2_stage_run(s, 0, &stageReport, &trace, &r));
+            assert(r.stopped && r.generations == 10);
+            ok(solver2_model_free(m));
+            size_t rows;
+            refused(solver2_model_rows(m, &rows), "a model: not a handle");
+            ok(solver2_stage_run(s, 0, &stageReport, &trace, &r));
+            assert(r.finished && bytesOf(s) == wholeStage(true));
+            ok(solver2_stage_free(s));
+        }
+        {
+            const o = archiveOptions(true);
+            auto m = smallModel(p, threads);
+            solver2_archive* a;
+            ok(solver2_archive_new(p, &o, null, 0, m, &a));
+            ArchiveTrace trace = {stopAt: 6};
+            solver2_archive_result r;
+            ok(solver2_archive_run(a, 0, &archiveReport, &trace, &r));
+            assert(r.stopped && r.iterations == 6);
+            ok(solver2_model_free(m));
+            ok(solver2_archive_run(a, 0, &archiveReport, &trace, &r));
+            assert(r.finished && bytesOf(a) == wholeArchive(true));
+            ok(solver2_archive_free(a));
+        }
+        ok(solver2_problem_free(p));
+    }
+}
+
+unittest
+{
+    // A larger budget whose call fails is the run's all the same: the run
+    // is not finished, and the call made again with no budget goes on to
+    // it, and ends as the run given that budget at the start.
+    {
+        Calls calls;
+        auto p = field(&calls);
+        auto o = stageOptions();
+        solver2_stage* s, longer;
+        ok(solver2_stage_new(p, &o, null, null, &s));
+        solver2_stage_result r;
+        ok(solver2_stage_run(s, 0, null, null, &r));
+        assert(r.finished && r.evaluations == 400);
+        calls.failAt = calls.batches + 5;
+        refused(solver2_stage_run(s, 480, null, null, &r), "evaluation reported a failure", SOLVER2_CALLBACK);
+        assert(r.evaluations == 432 && !r.finished && !r.stopped);
+        ok(solver2_stage_get(s, &r));
+        assert(r.evaluations == 432 && !r.finished);
+        ok(solver2_stage_run(s, 0, null, null, &r));
+        assert(r.evaluations == 480 && r.finished);
+        o.budget = 480;
+        ok(solver2_stage_new(p, &o, null, null, &longer));
+        ok(solver2_stage_run(longer, 0, null, null, null));
+        assert(bytesOf(s) == bytesOf(longer));
+        ok(solver2_stage_free(longer));
+        ok(solver2_stage_free(s));
+        ok(solver2_problem_free(p));
+    }
+    {
+        Calls calls;
+        auto p = field(&calls);
+        auto o = archiveOptions();
+        solver2_archive* a, longer;
+        ok(solver2_archive_new(p, &o, null, 0, null, &a));
+        solver2_archive_result r;
+        ok(solver2_archive_run(a, 0, null, null, &r));
+        assert(r.finished && r.iterations == 17);
+        calls.failAt = calls.batches + 3;
+        refused(solver2_archive_run(a, 520, null, null, &r), "evaluation reported a failure", SOLVER2_CALLBACK);
+        assert(r.iterations == 19 && !r.finished && !r.stopped);
+        ok(solver2_archive_run(a, 0, null, null, &r));
+        assert(r.iterations == 22 && r.finished);
+        o.evals = 520;
+        ok(solver2_archive_new(p, &o, null, 0, null, &longer));
+        ok(solver2_archive_run(longer, 0, null, null, null));
+        assert(bytesOf(a) == bytesOf(longer));
+        ok(solver2_archive_free(longer));
+        ok(solver2_archive_free(a));
+        ok(solver2_problem_free(p));
+    }
 }
 
 unittest

@@ -488,6 +488,31 @@ extern (C) int main(int argc, char** argv)
         ok(solver2_problem_free(q));
     }
 
+    // A model freed while its run is stopped: the run holds it, and goes on
+    // without its threads to the same bits. And no cell is picked into no
+    // room.
+    {
+        auto o = archiveOptions();
+        auto m = model(p, 2);
+        h.solver2_archive* a;
+        ok(solver2_archive_new(p, &o, null, 0, m, &a));
+        size_t stopAt = 6;
+        h.solver2_archive_result r;
+        ok(solver2_archive_run(a, 0, &stopArchive, &stopAt, &r));
+        check(r.iterations == 6 && r.stopped, "an archive stopped by its report");
+        ok(solver2_model_free(m));
+        ok(solver2_archive_run(a, 0, null, null, &r));
+        check(r.finished && same(bytesOf(a), archive), "a run gone on with after its model was freed");
+        size_t[2] room = [77, 77];
+        size_t picked = 9;
+        ok(solver2_archive_diverse(a, 3, 0, room.ptr, &picked));
+        check(picked == 0 && room[0] == 77, "no cell picked for a count of 0");
+        ok(solver2_archive_diverse(a, 3, 1, room.ptr, &picked));
+        check(picked == 1 && room[0] == r.best_cell && room[1] == 77, "the best cell alone for a count of 1");
+        printf("a model freed in mid-run: the run goes on without its threads, to the same bits\n");
+        ok(solver2_archive_free(a));
+    }
+
     // Threads the D runtime never heard of, each making many calls: the
     // same runs, the same bits, and their errors their own. Two at once,
     // while this one runs a stage too; then a string of short ones, each

@@ -99,6 +99,65 @@ class AProblem(unittest.TestCase):
         p.check()
         self.assertGreater(p.batches, 0)
 
+    def test_closed_it_stays_closed(self):
+        p = Field()
+        stage = solver2.Stage(p, **STAGE)
+        stage.run(report=lambda g: g.generation == 10)
+        archive = solver2.Archive(p, **ARCHIVE)
+        archive.run()
+        p.close()
+        p.close()
+        for ask in (lambda: p.dimension, lambda: p.cells, lambda: p.start, lambda: p.physical([0.5, 0.5, 0.5]),
+                    lambda: p.cell_code(0), p.check, lambda: solver2.Stage(p, **STAGE),
+                    lambda: solver2.Archive(p, **ARCHIVE), lambda: small_model(p)):
+            with self.assertRaisesRegex(solver2.Error, "this problem was closed"):
+                ask()
+
+        # Its runs hold it in the library: they are read and saved as before.
+        self.assertEqual((stage.result.generations, stage.best.genes.shape), (10, (3,)))
+        self.assertGreater(stage.causes["sum"], 0)
+        e = archive.elites()
+        self.assertEqual((e.occupied.sum(), archive.thresholds.shape), (archive.result.coverage, (16,)))
+        self.assertEqual(archive.save(), whole_archive())
+        saved = stage.save()
+        # One gone on with stops, whole, where its evaluation asks the
+        # closed problem for the genes' values.
+        with self.assertRaisesRegex(solver2.Error, "this problem was closed"):
+            stage.run()
+        self.assertEqual(stage.result.generations, 10)
+        with self.assertRaisesRegex(solver2.Error, "this problem was closed"):
+            archive.run(evals=520)
+        self.assertEqual(archive.result.iterations, 17)
+        # On a problem made anew it ends as the stage that never stopped.
+        back = solver2.Stage.load(Field(), saved)
+        back.run()
+        self.assertEqual(back.save(), whole_stage())
+
+        # Closed before it was ever used, it is closed too.
+        q = Field()
+        q.close()
+        with self.assertRaisesRegex(solver2.Error, "this problem was closed"):
+            q.dimension
+
+    def test_closed_its_runs_go_on_when_they_ask_nothing_of_it(self):
+        class Plain(solver2.Problem):
+            genes = [Gene("x", 0, 1), Gene("y", 0, 1)]
+
+            def evaluate(self, genes, feasible_only):
+                x, y = np.clip(genes, 0, 1).T
+                return -(x - 0.3) * (x - 0.3) - (y - 0.7) * (y - 0.7), None, None
+
+        ends = []
+        for close in (False, True):
+            p = Plain()
+            stage = solver2.Stage(p, lambda_=8, sigma=0.2, budget=160, seed=3, stall_generations=0)
+            stage.run(report=lambda g: g.generation == 5)
+            if close:
+                p.close()
+            self.assertTrue(stage.run().finished)
+            ends.append(stage.save())
+        self.assertEqual(ends[0], ends[1])
+
     def test_physical(self):
         p = Field()
         self.assertEqual(p.physical([0.25, 1.5, 0.5]).tolist(), [0.5, 2, 0])            # clamped
@@ -237,6 +296,21 @@ class AStage(unittest.TestCase):
         # A larger budget goes on.
         self.assertEqual(stage.run(budget=480).generations, 60)
 
+    def test_a_larger_budget_whose_run_fails_is_still_its_budget(self):
+        p = Field()
+        stage = solver2.Stage(p, **STAGE)
+        self.assertTrue(stage.run().finished)
+        p.fail_at = p.batches + 5
+        with self.assertRaisesRegex(ValueError, "the problem failed on purpose"):
+            stage.run(budget=480)
+        self.assertEqual((stage.result.evaluations, stage.result.finished), (432, False))
+        # Gone on with, it ends as the stage given that budget at the start.
+        r = stage.run()
+        self.assertEqual((r.evaluations, r.finished), (480, True))
+        longer = solver2.Stage(Field(), **dict(STAGE, budget=480))
+        longer.run()
+        self.assertEqual(stage.save(), longer.save())
+
     def test_its_own_start_and_what_it_refuses(self):
         p = Field()
         stage = solver2.Stage(p, start=[0.2, 0.2, 0.6], **STAGE)
@@ -246,10 +320,18 @@ class AStage(unittest.TestCase):
             solver2.Stage(p, start=[0.2, 0.2], **STAGE)
         with self.assertRaisesRegex(TypeError, "a stage has no option 'population'. It has: lambda_, sigma"):
             solver2.Stage(p, population=8)
-        with self.assertRaisesRegex(solver2.Error, "needs a population"):
-            solver2.Stage(p, sigma=0.2, budget=80)
-        with self.assertRaisesRegex(solver2.Error, "needs surrogate_pool above 0"):
-            solver2.Stage(p, model=small_model(p), **STAGE)
+        for lambda_ in (0, 1):
+            with self.assertRaisesRegex(solver2.Error, r"needs a population \(lambda\) of at least 2"):
+                solver2.Stage(p, lambda_=lambda_, sigma=0.2, budget=80)
+        for pool in (0, 1):
+            with self.assertRaisesRegex(solver2.Error, "a stage with a model needs surrogate_pool of at least 2"):
+                solver2.Stage(p, model=small_model(p), **dict(STAGE, surrogate_pool=pool))
+        for share in (-0.1, 1.5, float("nan")):
+            with self.assertRaisesRegex(solver2.Error, "a stage's surrogate_share must be from 0 to 1"):
+                solver2.Stage(p, model=small_model(p), **dict(SCREENED, surrogate_share=share))
+        for share in (0, 1):
+            self.assertTrue(solver2.Stage(p, model=small_model(p), **dict(SCREENED, surrogate_share=share))
+                            .run().finished)
 
     def test_stopped_saved_loaded_and_gone_on_with(self):
         for screened in (False, True):
@@ -285,6 +367,20 @@ class AStage(unittest.TestCase):
         model.close()
         with self.assertRaisesRegex(solver2.Error, "this model was closed"):
             model.rows
+
+    def test_a_model_closed_its_runs_go_on(self):
+        # Its threads stopped, the runs that hold it go on without them.
+        for threads in (0, 2):
+            p = Field()
+            with small_model(p, threads) as model:
+                stage = solver2.Stage(p, model=model, **SCREENED)
+                archive = solver2.Archive(p, model=small_model(p, threads), **GUIDED)
+                stage.run(report=lambda g: g.generation == 10)
+                archive.run(report=lambda it: it.iteration == 6)
+            archive.model.close()
+            self.assertTrue(stage.run().finished and archive.run().finished)
+            self.assertEqual(stage.save(), whole_stage(True))
+            self.assertEqual(archive.save(), whole_archive(True))
 
 
 class WhenSomethingIsRaised(unittest.TestCase):
@@ -394,6 +490,7 @@ class AnArchive(unittest.TestCase):
         self.assertTrue(t[15] == 5 and (t >= 5).all() and (t[held] <= e.value[held]).all())
         picks = archive.diverse(3, 4)
         self.assertTrue(picks[0] == r.best_cell and 1 < len(picks) <= 4 and len(set(picks)) == len(picks))
+        self.assertEqual((archive.diverse(3, 0), archive.diverse(3, 1), archive.diverse(3, 2)), ([], picks[:1], picks[:2]))
         self.assertGreater(archive.causes["sum"], 0)
 
         self.assertEqual(archive.save(), whole_archive())
@@ -413,8 +510,15 @@ class AnArchive(unittest.TestCase):
             solver2.Archive(p, seeds=[[0.5, 0.5]], **ARCHIVE)
         with self.assertRaisesRegex(solver2.Error, "needs a model when surrogate_pool is above 0"):
             solver2.Archive(p, **GUIDED)
+        with self.assertRaisesRegex(solver2.Error, "surrogate_pool must be 0, or at least 2 with a model"):
+            solver2.Archive(p, model=small_model(p), **dict(GUIDED, surrogate_pool=1))
         with self.assertRaisesRegex(solver2.Error, "infeasibleShare"):
             solver2.Archive(p, rules=dict(infeasible_share=0), **ARCHIVE)
+        with self.assertRaisesRegex(solver2.Error, r"needs a population \(lambda\) of at least 2 per emitter"):
+            solver2.Archive(p, **dict(ARCHIVE, lambda_=1))
+        for share in (-0.1, 1.5, float("nan")):
+            with self.assertRaisesRegex(solver2.Error, "the archive's surrogate_share must be from 0 to 1"):
+                solver2.Archive(p, model=small_model(p), **dict(GUIDED, surrogate_share=share))
         with self.assertRaisesRegex(TypeError, "an archive's rules has no option 'patience'"):
             solver2.Archive(p, rules=dict(patience=3), **ARCHIVE)
         # Rules as given change the run.
@@ -437,6 +541,51 @@ class AnArchive(unittest.TestCase):
             r = back.run()
             self.assertTrue(r.finished and not r.stopped and r.iterations == 17)
             self.assertEqual(back.save(), whole_archive(guided))
+
+    def test_a_report_reads_and_saves_the_run(self):
+        # As after the iteration it is told of, from the first one of the
+        # first call on: a checkpoint written from a report holds the run.
+        for guided in (False, True):
+            p = Field()
+            archive = solver2.Archive(p, model=small_model(p) if guided else None,
+                                      **(GUIDED if guided else ARCHIVE))
+            seen, saved = [], []
+
+            def report(it):
+                r = archive.result
+                seen.append((r.started, r.iterations, r.evaluations, r.coverage, r.qd_score,
+                             int(archive.elites().occupied.sum())))
+                saved.append(archive.save())
+                return it.iteration == 6
+
+            archive.run(report=report)
+            reports = []
+            archive.run(report=lambda it: report(it) and False or reports.append(it))
+            self.assertEqual([s[:3] for s in seen], [(True, i, 1 + 24 * i) for i in range(1, 18)])
+            self.assertTrue(all(s[3] == s[5] for s in seen))
+            self.assertEqual([s[3:5] for s in seen[6:]], [(it.coverage, it.qd_score) for it in reports])
+            whole = whole_archive(guided)
+            self.assertEqual(saved[-1], whole)
+            for at in (0, 5, 11):
+                q = Field()
+                back = solver2.Archive.load(q, saved[at], model=small_model(q) if guided else None)
+                self.assertEqual((back.result.started, back.result.iterations), (True, at + 1))
+                back.run()
+                self.assertEqual(back.save(), whole)
+
+    def test_a_larger_budget_whose_run_fails_is_still_its_budget(self):
+        p = Field()
+        archive = solver2.Archive(p, **ARCHIVE)
+        self.assertTrue(archive.run().finished)
+        p.fail_at = p.batches + 3
+        with self.assertRaisesRegex(ValueError, "the problem failed on purpose"):
+            archive.run(evals=520)
+        self.assertEqual((archive.result.iterations, archive.result.finished), (19, False))
+        r = archive.run()
+        self.assertEqual((r.iterations, r.finished), (22, True))
+        longer = solver2.Archive(Field(), **dict(ARCHIVE, evals=520))
+        longer.run()
+        self.assertEqual(archive.save(), longer.save())
 
     def test_a_model(self):
         p = Field()

@@ -251,6 +251,9 @@ int solver2_model_options_default(solver2_model_options* options);
  * one for the next. */
 int solver2_model_new(solver2_problem* problem, uint64_t seed, const solver2_model_options* options,
                       solver2_model** model);
+
+/* Stops its threads. A stage or an archive made with it holds it still,
+ * and goes on with it on the caller's thread, to the same bits. */
 int solver2_model_free(solver2_model* model);
 
 /* The evaluations it has learned from. */
@@ -259,12 +262,12 @@ int solver2_model_rows(solver2_model* model, size_t* rows);
 /* ── A CMA-ES stage ───────────────────────────────────────────────────── */
 
 /* lambda, sigma and budget have no defaults: set them. With a model, set
- * surrogate_pool above 0: from generation surrogate_from on the stage
+ * surrogate_pool to 2 or more: from generation surrogate_from on the stage
  * samples surrogate_pool times lambda and evaluates lambda of them,
- * surrogate_share of those the ones the model ranks best. */
+ * surrogate_share of those (from 0 to 1) the ones the model ranks best. */
 typedef struct solver2_stage_options
 {
-    size_t lambda;            /* the population */
+    size_t lambda;            /* the population: at least 2 */
     double sigma;             /* the initial step size, in gene units */
     size_t budget;            /* evaluations, rounded up to whole generations */
     uint64_t seed;
@@ -294,7 +297,10 @@ typedef struct solver2_stage_generation
 /* Called after each generation. Return 0 to go on, a positive value to
  * stop the stage here (solver2_stage_run goes on from there when called
  * again), a negative one to report a failure: the stage stops here too,
- * and the call returns SOLVER2_CALLBACK. */
+ * and the call returns SOLVER2_CALLBACK.
+ *
+ * It may read the stage and save it (solver2_stage_get, _best, _causes,
+ * _save): the stage is then as after this generation. */
 typedef int (*solver2_stage_report_fn)(void* context, const solver2_stage_generation* generation);
 
 /* Where a stage stands. */
@@ -323,7 +329,9 @@ int solver2_stage_free(solver2_stage* stage);
  *
  * When the evaluation fails (SOLVER2_CALLBACK) the stage and its model
  * are left as they were after the last whole generation, and the call can
- * be made again. `result` (or NULL) is filled either way. */
+ * be made again. The budget asked for stays the stage's: it is `finished`
+ * against that one, and a call with 0 goes on to it. `result` (or NULL)
+ * is filled either way. */
 int solver2_stage_run(solver2_stage* stage, size_t budget, solver2_stage_report_fn report, void* context,
                       solver2_stage_result* result);
 
@@ -368,14 +376,14 @@ typedef struct solver2_archive_options
 {
     size_t evals;             /* the budget beyond the seeds, in whole iterations */
     size_t emitters;          /* explorers included */
-    size_t lambda;            /* per emitter; 0: CMA-ES's default for the dimension */
+    size_t lambda;            /* per emitter, at least 2; 0: CMA-ES's default for the dimension */
     double sigma;             /* the improvers' initial step size */
     double alpha;             /* the archive learning rate */
     uint64_t seed;
     size_t explorers;         /* the last emitters head for empty cells */
     double explorer_sigma;
-    size_t surrogate_pool;    /* with a model: above 0 */
-    double surrogate_share;
+    size_t surrogate_pool;    /* with a model: at least 2; without: 0 */
+    double surrogate_share;   /* from 0 to 1 */
     size_t surrogate_from;
     size_t surrogate_epochs;
     int surrogate_improvers;  /* pre-screen the improvers too */
@@ -398,7 +406,9 @@ typedef struct solver2_archive_iteration
     size_t restarts;          /* emitters that restart or take a new target after it */
 } solver2_archive_iteration;
 
-/* Called after each iteration; its return value as solver2_stage_report_fn's. */
+/* Called after each iteration; its return value as solver2_stage_report_fn's.
+ * It may read the run and save it, as a stage's report its stage: the run
+ * is then as after this iteration, in the first call too. */
 typedef int (*solver2_archive_report_fn)(void* context, const solver2_archive_iteration* iteration);
 
 /* Where a run of the archive stands. */
@@ -438,7 +448,9 @@ int solver2_archive_free(solver2_archive* archive);
  *
  * When the evaluation fails (SOLVER2_CALLBACK) the run and its model are
  * left as they were after the last whole iteration, and the call can be
- * made again. `result` (or NULL) is filled either way. */
+ * made again. The `evals` asked for stay the run's: it is `finished`
+ * against them, and a call with 0 goes on to them. `result` (or NULL) is
+ * filled either way. */
 int solver2_archive_run(solver2_archive* archive, size_t evals, solver2_archive_report_fn report, void* context,
                         solver2_archive_result* result);
 
@@ -460,7 +472,7 @@ int solver2_archive_causes(solver2_archive* archive, size_t* over);
 
 /* The cells to show: the best, then again and again the one farthest from
  * those picked, among the cells at most `within` below the best. At most
- * `count` into `cells`; `picked` gets how many. */
+ * `count` into `cells` (NULL for a `count` of 0); `picked` gets how many. */
 int solver2_archive_diverse(solver2_archive* archive, double within, size_t count, size_t* cells, size_t* picked);
 
 /* The run as bytes, and back: as solver2_stage_save and solver2_stage_load. */

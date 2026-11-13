@@ -560,16 +560,33 @@ rounded up to whole generations. `screenModel` is `null` or a
 
 | Field | Default | Meaning |
 |---|---|---|
-| `lambda` | none | Population size. Must be > 0 (`cmaStage` throws otherwise). |
-| `sigma` | none | Initial step size, in gene units |
+| `lambda` | none | Population size, at least 2. `cmaStage` throws on 0. |
+| `sigma` | none | Initial step size, in gene units: finite and above 0 |
 | `budget` | none | Evaluations, rounded up to whole generations |
 | `seed` | none | CMA-ES and pre-screening seed |
 | `stallGenerations`, `stallTolerance` | 100, 0.01 | Stop when the best value rose by less than the tolerance over the last N generations (0 = never) |
-| `surrogatePool` | 0 | With a model: sample this many times `lambda`, evaluate `lambda`. Must be ≥ 1 when you pass a model (`cmaStage` throws otherwise). |
-| `surrogateShare` | 0.5 | Share of the evaluated candidates that the model picks (the rest are random) |
+| `surrogatePool` | 0 | With a model: sample this many times `lambda`, evaluate `lambda`. At least 2 when you pass a model (`cmaStage` throws on 0). |
+| `surrogateShare` | 0.5 | Share of the evaluated candidates that the model picks (the rest are random): from 0 to 1 |
 | `surrogateFrom` | 5 | Generation where pre-screening starts |
 | `surrogateEpochs` | 10 | Epochs trained before each pre-screened generation |
 | `ranking` | `Ranking.init` | See [Ranking](#ranking) |
+
+**Values not to pass.** `cmaStage` checks two things of its options: a
+`lambda` above 0, and a `surrogatePool` above 0 with a model. The rest is
+yours to get right, and these go wrong:
+
+| Value | What the stage does with it |
+|---|---|
+| `lambda` 1 | CMA-ES moves towards the better half of its population, and one candidate has none: the genes it samples turn NaN, and the problem is handed them. |
+| `sigma` NaN | NaN genes, as above. |
+| `sigma` 0 | It evaluates its start again and again, and never leaves it. |
+| `surrogateShare` below 0, above 1 or NaN, with a model | It picks more candidates than it evaluates, or a share that is no number. With bounds checks, an `ArrayIndexError` or `ArraySliceError` in the first pre-screened generation; without them (see [Bounds checks](#bounds-checks)) it writes past an array. |
+| `surrogatePool` 1, with a model | Nothing is pre-screened, and from generation `surrogateFrom` on it makes its CMA-ES anew every generation, from the same seed: the step size goes on, the covariance and the random numbers start over. |
+
+`cmaStage` also takes `x0` as it is: a gene that isn't finite reaches the
+problem. `runStage` over a `DynamicProblem` throws on one. The C
+interface and Python refuse every row above (see
+[A stage from Python](#a-stage-from-python)).
 
 **`Best!E`** is the best feasible candidate so far. Start a run with
 `Best.init`, or set `genes` and `eval` to your own start. Pass the same
@@ -806,13 +823,13 @@ archive of your own takes it in its constructor:
 | Field | Meaning |
 |---|---|
 | `evals` [8000] | Budget beyond the seeds, rounded up to whole iterations. On resume it is still the whole run's budget. |
-| `emitters` [5] | Emitters, explorers included |
-| `lambda` [0] | Population per emitter. 0 uses CMA-ES's default for the dimension (4 + ⌊3 ln n⌋). |
-| `sigma` [0.05] | Improvers' initial step size |
-| `alpha` [0.1] | Archive learning rate. 0 optimises value alone; 1 is CMA-ME. See [The archive learning rate](#the-archive-learning-rate-alpha). |
+| `emitters` [5] | Emitters, explorers included: at least 1 |
+| `lambda` [0] | Population per emitter, at least 2. 0 uses CMA-ES's default for the dimension (4 + ⌊3 ln n⌋). |
+| `sigma` [0.05] | Improvers' initial step size: finite and above 0 |
+| `alpha` [0.1] | Archive learning rate, from 0 to 1. 0 optimises value alone; 1 is CMA-ME. See [The archive learning rate](#the-archive-learning-rate-alpha). |
 | `seed` [1] | Run seed |
 | `explorers` [2] | How many of the emitters are explorers (the last ones) |
-| `explorerSigma` [0.1] | Explorers' step size |
+| `explorerSigma` [0.1] | Explorers' step size: finite and above 0 |
 | `surrogatePool` [0] | With a model, model-guided explorers sample this many times their population. 0 = off. **A model must be passed if and only if this is > 0.** |
 | `surrogateShare` [0.5], `surrogateFrom` [5], `surrogateEpochs` [10] | As in the stage. `surrogateFrom` counts iterations. |
 | `surrogateImprovers` [false] | Pre-screen the improvers too |
@@ -826,6 +843,27 @@ more. Without `ranking` or `rules`, the archive uses their defaults. `O`
 must support `==`, because a resumed run checks that its options equal the
 saved ones (all but `evals`): a run keeps its ranking and rules when
 resumed.
+
+**Values not to pass.** `runArchive` checks the rules (see
+[Checking them](#checking-them)) and that a model comes with a
+`surrogatePool` above 0, and only with one. The rest is yours to get
+right, and these go wrong:
+
+| Value | What the run does with it |
+|---|---|
+| `emitters` 0 | It never returns: an iteration without emitters spends nothing of the budget. |
+| `lambda` 1 | NaN genes for the problem, as in [the stage](#a-cma-es-stage). |
+| `sigma`, `explorerSigma`, `alpha` or `surrogateShare` NaN | It evaluates the seeds and then throws "an archive resumed goes on with its own options": the options are compared, and a NaN equals nothing. |
+| `sigma` or `explorerSigma` 0 | Emitters that never leave where they start. |
+| `alpha` below 0 or above 1 | No error, and no CMA-MAE: a threshold backs away from its cell's values, or overshoots them. |
+| `surrogateShare` below 0 or above 1, with a model | As in the stage: an `ArrayIndexError` or `ArraySliceError` with bounds checks, a write past an array without. |
+| `surrogatePool` 1, with a model | No emitter samples more than it evaluates, so the model learns and guides none. |
+
+The template also takes the seeds as they are: a gene that isn't finite
+reaches the problem. `runArchive` over a `DynamicProblem` throws on one.
+More `explorers` than `emitters` is fine: every emitter is then an
+explorer. The C interface and Python refuse every row above (see
+[The archive from Python](#the-archive-from-python)).
 
 ### The archive learning rate (`alpha`)
 
@@ -1038,7 +1076,8 @@ one: a rule moves every later restart, so one run says little.
 
 `selectDiverse(archive, grid, within, count)` picks elites to show: the
 best first, then repeatedly the elite farthest in bins from those already
-picked, among elites at most `within` below the best.
+picked, among elites at most `within` below the best. At most `count` of
+them: none for a `count` of 0.
 
 ### Focused runs
 
@@ -1139,6 +1178,10 @@ own as a fourth argument (its `seed` is replaced by the model's):
 Other members:
 
 - `rows()` is the number of evaluations learned.
+- `usePool(pool)` gives it another pool from here on, or none (`null`).
+  Call it before you stop a pool's threads (`pool.finish`) under a model
+  that is still used: the model otherwise goes on submitting to them. The
+  bits are the same on any pool.
 - `predictEach(genes, take)` gives raw outputs per candidate, for your own
   studies.
 - `trainSeconds`, `predictSeconds` and `trainings` are timings.
@@ -1725,6 +1768,12 @@ Also on a problem: `dimension` (the number of genes), `cells` (the
 grid's), `start` (the genes a search starts from when given none),
 `cell_code(cell)` (a cell's name, one letter per axis) and `close()`.
 
+`close()` lets go of the problem in the library, for good: asked for
+anything afterwards, the problem raises a `solver2.Error`. Its runs hold
+it still, and can be read and saved. One gone on with stops, whole, at
+that error when its `evaluate` asks the problem for something, as
+`physical`: so close a problem after its runs.
+
 Underneath, the problem is a [`DynamicProblem`](#dynamic-problems) on
 the D side, so what that section says of the class route holds here. Its
 learning spec is the class's default; a Python problem can't give its
@@ -1743,6 +1792,10 @@ print(end.generations, end.stalled, best.value, best.genes, stage.causes)
 [`StageOptions`](#a-cma-es-stage)' fields in snake case, as keywords
 (`lambda_` for `lambda`, which Python reserves), less `ranking`, which
 is the problem's. `lambda_`, `sigma` and `budget` have no defaults.
+The interface refuses the values the D route takes as they are (see
+[A CMA-ES stage](#a-cma-es-stage), "Values not to pass"): a `lambda_`
+below 2, a `sigma` that isn't finite and above 0, a `surrogate_share`
+outside 0 to 1, and a `surrogate_pool` below 2 with a model.
 
 - **`run(budget=None, report=None)`** runs until the budget is spent,
   the stage stalls, or the report stops it, and returns a `StageResult`:
@@ -1751,7 +1804,8 @@ is the problem's. `lambda_`, `sigma` and `budget` have no defaults.
 - **`report`** is called after each generation with a `StageGeneration`:
   `generation`, `evaluations`, `best`, `population_best`, `sigma`,
   `infeasible`, `sampled`, `predicted_feasible`. A true return stops the
-  stage there.
+  stage there. A report may read the stage and `save` it: the stage is
+  then as after that generation.
 - **`stage.best`** is a `Candidate`: `genes` (in [0, 1]), `value`,
   `objective`, `scored`, `hard`, `terminal`, `soft`, `violations` and
   `descriptors`.
@@ -1775,7 +1829,11 @@ for cell in archive.diverse(3, 4):
 gene vector or several (the problem's start when None). The options are
 [`ArchiveOptions`](#options)' fields in snake case, less `ranking`;
 `rules` is a dict of [`ArchiveRules`](#restart-and-explorer-rules)'
-fields in snake case (`rules={"idle_generations": 8}`).
+fields in snake case (`rules={"idle_generations": 8}`). The interface
+refuses the values the D route takes as they are (see
+[Options](#options), "Values not to pass"): no emitters, a `lambda_` of
+1, step sizes that aren't finite and above 0, an `alpha` or a
+`surrogate_share` outside 0 to 1, and a `surrogate_pool` of 1.
 
 - **`run(evals=None, report=None)`** runs until `evals` evaluations
   beyond the seeds are spent, or the report stops it, and returns an
@@ -1790,7 +1848,8 @@ fields in snake case (`rules={"idle_generations": 8}`).
   generation, not each emitter's as on the D route) with an
   `ArchiveIteration`: `iteration`, `evaluations`, `coverage`,
   `qd_score`, `best_score`, `improved`, `new_cells`, `restarts`. A true
-  return stops the run there.
+  return stops the run there. A report may read the run and `save` it:
+  the run is then as after that iteration.
 - **`elites()`** gives every cell at once, as an `Elites` of arrays with
   cell `c` at index `c`: `occupied`, `value`, `found`, `genes`,
   `objective`, `scored`, `hard`, `terminal`, `soft`, `violations`,
@@ -1813,8 +1872,9 @@ from the genes it learns the value, the hard and the terminal breach,
 and the descriptors. Its options are `members`, `hidden`, `batch`,
 `learning_rate` and `l2`.
 
-- A run with a model needs `surrogate_pool` above 0, and an archive
-  without one must leave it at 0.
+- A run with a model needs a `surrogate_pool` of at least 2 (with 1 it
+  would sample no more than it evaluates, and nothing would be ranked
+  on the model), and an archive without one must leave it at 0.
 - `threads` are worker threads of the model's own, for training and
   predicting. They never call `evaluate`, and their number doesn't
   change the bits.
@@ -1822,7 +1882,9 @@ and the descriptors. Its options are `members`, `hidden`, `batch`,
   learned in one for the next. `model.rows` is the number of evaluations
   it has learned from.
 - `model.close()` stops its threads; a model also works in a `with`
-  statement, as a stage and an archive do.
+  statement, as a stage and an archive do. The runs made with a model
+  hold it still after it is closed, and go on without its threads, to
+  the same bits.
 
 ### Stopping, saving and resuming from Python
 
@@ -1857,6 +1919,9 @@ run.run()                                  # ends as the run that never stopped
   bit on the platform and the library it was saved with.
 - **Writing the file** is yours: write through a temporary file and a
   rename, so a stop in mid-write leaves the last one whole.
+- **A checkpoint as the run goes** is a `save()` in its report, every so
+  many generations or iterations: the bytes hold the run as after the
+  one reported.
 
 ### Errors and exceptions
 
@@ -1868,7 +1933,9 @@ run.run()                                  # ends as the run that never stopped
 - **The run is then left whole**: it and its model are as they were
   after their last whole generation or iteration. Call `run` again and
   it ends as the run that never failed, bit for bit. A long run in a
-  notebook survives an interrupt.
+  notebook survives an interrupt. A larger `budget` or `evals` that the
+  failed call asked for stays the run's: `finished` is against it, and
+  `run()` goes on to it.
 
 ### Threads
 
@@ -2351,6 +2418,9 @@ it.
    its lowest value, where solver's starts them at 0 against the
    manual's own rule. Its stage prints what solver's example prints; its
    archive's lines differ.
+6. **`selectDiverse` with a `count` of 0 picks nothing.** solver's gives
+   the best cell whatever the count, against its own "at most `count`".
+   From 1 up the picks are the same.
 
 ### The same bits
 
@@ -2480,56 +2550,63 @@ The searches:
    route: see [Setting the offsets](#setting-the-offsets).
 8. **`StageEnd.rise` is NaN unless the stage stalled**, so two `StageEnd`
    never compare equal with `==`. Compare their fields.
+9. **The D route checks little of its options.** A `lambda` of 1, a
+   `surrogateShare` outside 0 to 1, no emitters and a few more are taken
+   as they are, and end in NaN genes, a write past an array where bounds
+   checks are off, or a run that never returns. The values are listed
+   under "Values not to pass" in [A CMA-ES stage](#a-cma-es-stage) and
+   the archive's [Options](#options). The C interface and Python refuse
+   them.
 
 The class route:
 
-9. **`checkProblem` can't prove a problem sound.** It catches an
-   evaluation that isn't deterministic, or a `minScore` that is too
-   high, only on the rows it tries.
-10. **The entry points use `BinnedGrid`, `ArchiveOptions` and `N` 0.** A
+10. **`checkProblem` can't prove a problem sound.** It catches an
+    evaluation that isn't deterministic, or a `minScore` that is too
+    high, only on the rows it tries.
+11. **The entry points use `BinnedGrid`, `ArchiveOptions` and `N` 0.** A
     grid or an options type of your own, or an archive held by value,
     means calling the templates over `DynamicProblem` yourself (see
     [The entry points](#the-entry-points)).
 
 Python and the C interface:
 
-11. **The library owns the loop.** You give an `evaluate` and the search
+12. **The library owns the loop.** You give an `evaluate` and the search
     calls it; there is no way to ask for candidates and tell their
     results, as pycma and pyribs offer. It could be added without
     rewriting the searches and isn't planned. To run your own code
     between generations, use the report.
-12. **The Python module is a folder, not a wheel.** Nothing installs it
+13. **The Python module is a folder, not a wheel.** Nothing installs it
     with pip: unpack a release, or build the library, and put the folder
     on Python's path (see [Setting up](#setting-up)). Releases are for
     Linux and Windows on x86-64 only.
-13. **What the interface leaves out of the D route**: the archive's
+14. **What the interface leaves out of the D route**: the archive's
     `evaluated` callback and its per-emitter reports (a report is per
     iteration), [focused runs](#focused-runs), a grid other than
     `BinnedGrid`, a learning spec of the problem's own (a model learns
     the class's defaults), `screenPenalty`, the `noFeasibleSeed` hint,
     and a `Best` carried from one stage to the next (start the next
     stage from the last one's best genes).
-14. **The library can't be started again** in one process after
+15. **The library can't be started again** in one process after
     `solver2_term`. The Python module never ends it.
-15. **Only 64-bit, and only the Pythons CI runs**: the newest, and 3.10
+16. **Only 64-bit, and only the Pythons CI runs**: the newest, and 3.10
     on Linux. The module uses nothing newer than 3.7, but older versions
     aren't tested.
-16. **A saved run's bytes are the library's own format**, not the
+17. **A saved run's bytes are the library's own format**, not the
     checkpoint template's: a run saved from Python doesn't load in a D
     program that uses the template, nor the reverse.
-17. **A model's state is saved after every generation or iteration** of
+18. **A model's state is saved after every generation or iteration** of
     a run from Python or C, so that a failed evaluation can leave the
     run whole. That is most of what the Python example costs over the D one
     (see [What Python costs](#what-python-costs)).
-18. **On Linux the library isn't one file.** It needs LDC's two shared
+19. **On Linux the library isn't one file.** It needs LDC's two shared
     runtime libraries, found in the LDC that built it or beside the
     library (see [Setting up](#setting-up)); a release has them beside
     it. On Windows it is one file.
-19. **A Linux release is tied to its C library.** It needs glibc 2.35 or
+20. **A Linux release is tied to its C library.** It needs glibc 2.35 or
     newer. On a newer glibc than Ubuntu 22.04's it runs, and its results
     may differ in their last bits from the same release on 22.04, as
     runs do between platforms: keep reference results per system.
-20. **solver2 is proprietary.** The repository and its releases are
+21. **solver2 is proprietary.** The repository and its releases are
     public to read and download, and using them needs a licence granted
     individually (`LICENSE.md`).
 

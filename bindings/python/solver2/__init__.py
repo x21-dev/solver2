@@ -213,9 +213,8 @@ class Problem:
     @property
     def cells(self):
         """The number of cells of the grid; 0 without axes."""
-        n = C.c_size_t()
-        _check(_lib.solver2_problem_cells(self._handle, C.byref(n)))
-        return n.value
+        self._handle
+        return self._cells
 
     @property
     def start(self):
@@ -260,8 +259,15 @@ class Problem:
         _check(_lib.solver2_problem_check(self._handle, rows, seed), self)
 
     def close(self):
-        """Lets go of the problem in the library. Its runs keep working."""
+        """Lets go of the problem in the library, for good: asked for
+        anything afterwards it raises an Error, as a closed run does.
+
+        Its runs hold it in the library and can still be read and saved.
+        One gone on with stops, whole, at the Error when its `evaluate`
+        asks the problem for something (`physical`): close the runs first.
+        """
         handle = self.__dict__.pop("_made", None)
+        self._closed = True
         if handle is not None:
             _lib.solver2_problem_free(handle)
 
@@ -277,6 +283,10 @@ class Problem:
     def _handle(self):
         handle = self.__dict__.get("_made")
         if handle is None:
+            # Never made again: its runs call the callback of the first
+            # making for as long as they live, and read arrays by its sizes.
+            if self.__dict__.get("_closed"):
+                raise Error("this problem was closed")
             handle = self._make()
         return handle
 
@@ -317,9 +327,13 @@ class Problem:
 
         self._n, self._limits, self._nd = len(genes), len(limits), len(axes)
         self._limit_names = [c.name for c in limits]
-        handle = C.c_void_p()
+        handle, cells = C.c_void_p(), C.c_size_t()
         _check(_lib.solver2_problem_new(C.byref(spec), C.byref(handle)))
         self._made = handle
+        # Kept, with the sizes above: a run is read by them after the
+        # problem was closed.
+        _check(_lib.solver2_problem_cells(handle, C.byref(cells)))
+        self._cells = cells.value
         return handle
 
     def _batch(self, context, rows, genes, feasible_only, scored, objective, violations, descriptors):
@@ -399,7 +413,8 @@ class Model(_Held):
         return n.value
 
     def close(self):
-        """Stops its threads and lets go of it."""
+        """Stops its threads and lets go of it. The runs made with it
+        hold it still, and go on without the threads, to the same bits."""
         handle = self.__dict__.pop("_made", None)
         if handle is not None:
             _lib.solver2_model_free(handle)
@@ -509,12 +524,12 @@ class Stage(_Run):
     """A CMA-ES stage over `problem`: the best candidate from `start` (the
     problem's start when None), pre-screened by `model` when given.
 
-    Options, as keywords: lambda_ (the population), sigma (the initial step
-    size, in gene units) and budget (evaluations) must be given; seed;
-    stall_generations and stall_tolerance (stop when the best rose by less
-    than the tolerance over that many generations; 0 generations: never);
-    with a model, surrogate_pool (above 0), surrogate_share, surrogate_from
-    and surrogate_epochs.
+    Options, as keywords: lambda_ (the population, at least 2), sigma (the
+    initial step size, in gene units) and budget (evaluations) must be
+    given; seed; stall_generations and stall_tolerance (stop when the best
+    rose by less than the tolerance over that many generations; 0
+    generations: never); with a model, surrogate_pool (at least 2),
+    surrogate_share (from 0 to 1), surrogate_from and surrogate_epochs.
     """
 
     _free = staticmethod(_lib.solver2_stage_free)
@@ -546,11 +561,13 @@ class Stage(_Run):
         larger budget extends a finished stage.
 
         `report` is called after each generation with a `StageGeneration`;
-        a true return stops the stage there.
+        a true return stops the stage there. It may read the stage and
+        `save` it: the stage is then as after that generation.
 
         An exception raised by `evaluate` or by `report` comes out of this
         call. The stage and its model are then as they were after the last
-        whole generation, and `run` can be called again.
+        whole generation, and `run` can be called again: it goes on to the
+        budget last asked for, the failed call's included.
         """
         callback = self._report(report, _c.StageReportFn, _stage_generation)
         r = _c.StageResult()
@@ -595,10 +612,11 @@ class Archive(_Run):
     given.
 
     Options, as keywords: evals (the budget beyond the seeds), emitters,
-    lambda_ (per emitter; 0: CMA-ES's default), sigma, alpha (the archive
-    learning rate), seed, explorers, explorer_sigma; with a model,
-    surrogate_pool (above 0), surrogate_share, surrogate_from,
-    surrogate_epochs, surrogate_improvers and surrogate_aim; rules (a dict
+    lambda_ (per emitter, at least 2; 0: CMA-ES's default), sigma, alpha
+    (the archive learning rate), seed, explorers, explorer_sigma; with a
+    model, surrogate_pool (at least 2), surrogate_share (from 0 to 1),
+    surrogate_from, surrogate_epochs, surrogate_improvers and
+    surrogate_aim; rules (a dict
     of idle_generations, infeasible_generations, infeasible_share,
     min_sigma, stale_generations, min_progress, block_iterations,
     aim_samples).
@@ -643,11 +661,13 @@ class Archive(_Run):
         larger `evals` extends a finished run.
 
         `report` is called after each iteration with an `ArchiveIteration`;
-        a true return stops the run there.
+        a true return stops the run there. It may read the run and `save`
+        it: the run is then as after that iteration.
 
         An exception raised by `evaluate` or by `report` comes out of this
         call. The run and its model are then as they were after the last
-        whole iteration, and `run` can be called again.
+        whole iteration, and `run` can be called again: it goes on to the
+        `evals` last asked for, the failed call's included.
         """
         callback = self._report(report, _c.ArchiveReportFn, _archive_iteration)
         r = _c.ArchiveResult()
@@ -664,7 +684,7 @@ class Archive(_Run):
     def elites(self):
         """Every cell at once: an `Elites` of arrays, cell c at index c."""
         p = self.problem
-        cells = p.cells
+        cells = p._cells
         occupied = np.zeros(cells, dtype=np.uint8)
         value, found = np.empty(cells), np.zeros(cells, dtype=np.uintp)
         genes, violations, descriptors = (np.empty((cells, k)) for k in (p._n, p._limits, p._nd))
@@ -684,7 +704,7 @@ class Archive(_Run):
     @property
     def thresholds(self):
         """Each cell's threshold."""
-        t = np.empty(self.problem.cells)
+        t = np.empty(self.problem._cells)
         _check(_lib.solver2_archive_thresholds(self._made, _pointer(t)))
         return t
 
@@ -696,7 +716,7 @@ class Archive(_Run):
     def diverse(self, within, count):
         """The cells to show: the best, then again and again the one
         farthest from those picked, among the cells at most `within` below
-        the best. At most `count`."""
+        the best. At most `count`: none for 0."""
         cells = (C.c_size_t * max(count, 1))()
         picked = C.c_size_t()
         _check(_lib.solver2_archive_diverse(self._made, within, count, cells, C.byref(picked)))
