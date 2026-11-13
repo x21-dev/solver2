@@ -149,6 +149,11 @@ final class LearnedModel(L) : StageModel!(L.Eval), ArchiveSurrogate!(L.Eval) if 
     /// Evaluations learned from.
     size_t rows() const pure nothrow @nogc { return x.length; }
 
+    /// Another pool from here on, or none (null): before a pool's threads
+    /// are stopped while the model is still used. The bits are the same
+    /// on any.
+    void usePool(TaskPool pool) pure nothrow @nogc @safe { this.pool = pool; }
+
     /// Everything a resumed run needs (the training data and the
     /// ensemble's state), as bytes; `evals`: the run's evaluations so far,
     /// checked when restored.
@@ -341,6 +346,35 @@ unittest
     auto c = new double[q.length], w = new double[q.length];
     a.predictScore([[0.0, 1.0]], c[0 .. 1], w[0 .. 1]);
     assert(c[0] == s[$ - 1] && w[0] == v[$ - 1]);
+}
+
+unittest
+{
+    // Taken off its pool before the pool's threads are stopped, a model
+    // goes on without them, to the same bits.
+    import std.parallelism : TaskPool;
+    auto pool = new TaskPool(3);
+    alias M = LearnedModel!Square;
+    auto a = new M(Square(), 7, null), b = new M(Square(), 7, pool);
+    const g = squareGenes(200, 1);
+    const e = squareEvals(g);
+    foreach (m; [a, b])
+    {
+        m.learn(g[0 .. 100], e[0 .. 100]);
+        m.train(2);
+    }
+    b.usePool(null);
+    pool.finish(true);
+    const q = squareGenes(20, 2);
+    auto sa = new double[q.length], va = new double[q.length], sb = new double[q.length], vb = new double[q.length];
+    foreach (m; [a, b])
+    {
+        m.learn(g[100 .. $], e[100 .. $]);
+        m.train(2);
+    }
+    a.predictScore(q, sa, va);
+    b.predictScore(q, sb, vb);
+    assert(a.save(200) == b.save(200) && sa == sb && va == vb);
 }
 
 unittest

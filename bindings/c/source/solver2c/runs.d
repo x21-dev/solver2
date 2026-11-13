@@ -87,9 +87,11 @@ final class ForeignModel
         learned = new DynamicModel(problem, seed, pool, e);
     }
 
-    /// Stops its worker threads. The model works on without them.
+    /// Stops its worker threads. The model works on without them, in the
+    /// runs that hold it too: with the same bits, on the calling thread.
     void close()
     {
+        learned.usePool(null);      // first: the model holds the pool as well
         if (pool !is null)
             pool.finish(true);
         pool = null;
@@ -118,6 +120,21 @@ private:
 private SavedModel savedOf(const ForeignModel model)
 {
     return model is null ? SavedModel.init : model.save();
+}
+
+/// Whether `lambda` is a population CMA-ES can rank: with one candidate
+/// it has no better half to move to, and samples NaN. `orDefault`: 0 too,
+/// for the archive's "CMA-ES's own".
+private bool isPopulation(size_t lambda, bool orDefault = false) pure nothrow @nogc @safe
+{
+    return lambda >= 2 || (orDefault && lambda == 0);
+}
+
+/// Whether `share` is one: from 0 to 1 (a NaN is not). The searches take
+/// that many of a population by it, without asking.
+private bool isShare(double share) pure nothrow @nogc @safe
+{
+    return share >= 0 && share <= 1;
 }
 
 /// Checks that a run is given the model its problem and its saved state
@@ -163,10 +180,11 @@ final class ForeignStage
     this(ForeignProblem problem, const ref solver2_stage_options o, const(double)[] start, ForeignModel model)
     {
         checkModel(problem, model, false, false);
-        enforce(o.lambda > 0, "a stage needs a population (lambda)");
+        enforce(isPopulation(o.lambda), "a stage needs a population (lambda) of at least 2");
         enforce(isFinite(o.sigma) && o.sigma > 0, "a stage needs a step size (sigma) above 0");
         enforce(o.budget > 0, "a stage needs a budget");
         enforce(model is null || o.surrogate_pool > 0, "a stage with a model needs surrogate_pool above 0");
+        enforce(isShare(o.surrogate_share), "a stage's surrogate_share must be from 0 to 1");
         StageOptions so = {lambda: o.lambda, sigma: o.sigma, budget: o.budget, seed: o.seed,
                            stallGenerations: o.stall_generations, stallTolerance: o.stall_tolerance,
                            surrogatePool: o.surrogate_pool, surrogateShare: o.surrogate_share,
@@ -191,12 +209,15 @@ final class ForeignStage
     /// stage stalls or `report` stops it. Throws what the evaluation
     /// throws, the stage and its model then as after their last whole
     /// generation; throws CallbackFailed when the report says so, the
-    /// stage then stopped at that generation.
+    /// stage then stopped at that generation. Either way the budget asked
+    /// for stays the stage's: it is `finished` against that one, and the
+    /// next call goes on to it.
     void advance(size_t budget, solver2_stage_report_fn report, void* context)
     {
-        auto o = options;
         if (budget > 0)
-            o.budget = budget;
+            options.budget = budget;
+        const o = options;
+        stopped = false;            // a report reads and saves a stage that is running
         SavedModel before = savedOf(model);
         solver2_stage_generation last;
         bool pending;
@@ -241,7 +262,6 @@ final class ForeignStage
             stopped = false;
             throw e;
         }
-        options.budget = o.budget;
         stopped = end.stopped;
         if (pending)
             tell();
@@ -287,8 +307,8 @@ final class ForeignStage
         checkModel(problem, model, s.model.present, true);
 
         immutable size_t n = problem.dimension;
-        enforce(s.start.length == n && s.options.ranking == problem.ranking && s.options.lambda > 0,
-                "the saved stage doesn't fit the problem");
+        enforce(s.start.length == n && s.options.ranking == problem.ranking && isPopulation(s.options.lambda)
+                && isShare(s.options.surrogateShare), "the saved stage doesn't fit the problem");
         enforce(s.run.history.length == s.run.generation, "the saved stage lacks its history");
         if (s.run.generation > 0)
             checkState(s.run.es, n);
@@ -394,11 +414,14 @@ final class ForeignArchive
         checkModel(problem, model, false, false);
         enforce(problem.axes.length > 0, "the archive needs a problem with axes");
         enforce(o.emitters > 0, "the archive needs emitters");
+        enforce(isPopulation(o.lambda, true),
+                "the archive needs a population (lambda) of at least 2 per emitter, or 0 for CMA-ES's own");
         enforce(isFinite(o.sigma) && o.sigma > 0 && isFinite(o.explorer_sigma) && o.explorer_sigma > 0,
                 "the archive needs step sizes (sigma, explorer_sigma) above 0");
         enforce(o.alpha >= 0 && o.alpha <= 1, "the archive's alpha must be from 0 to 1");
         enforce((model !is null) == (o.surrogate_pool > 0),
                 "an archive needs a model when surrogate_pool is above 0, and only then");
+        enforce(isShare(o.surrogate_share), "the archive's surrogate_share must be from 0 to 1");
         const r = &o.rules;
         ArchiveRules rules = {idleGenerations: r.idle_generations, infeasibleGenerations: r.infeasible_generations,
                               infeasibleShare: r.infeasible_share, minSigma: r.min_sigma,
@@ -435,12 +458,20 @@ final class ForeignArchive
     /// Throws what the evaluation throws, the run and its model then as
     /// after their last whole iteration (not started, when it was the seeds
     /// or the first iteration that failed); throws CallbackFailed when the
-    /// report says so, the run then stopped at that iteration.
+    /// report says so, the run then stopped at that iteration. Either way
+    /// the budget asked for stays the run's: it is `finished` against that
+    /// one, and the next call goes on to it.
+    ///
+    /// The report finds the run as after the iteration it is told of, in
+    /// the first call too.
     void advance(size_t evals, solver2_archive_report_fn report, void* context)
     {
-        auto o = options;
         if (evals > 0)
-            o.evals = evals;
+            options.evals = evals;
+        const o = options;
+        stopped = false;            // a report reads and saves a run that is running
+        // The first call's run is the searches' own until they return.
+        immutable bool first = !started;
         SavedModel modelBefore = savedOf(model);
         RunData before;
         bool haveBefore = started;
@@ -483,6 +514,13 @@ final class ForeignArchive
             before = dataOf(r);
             haveBefore = true;
             modelBefore = savedOf(model);
+            if (first)
+            {
+                // A copy for the report to read and save, as a later
+                // call's finds the run itself.
+                restore(run, before);
+                started = true;
+            }
             return tell();
         }
 
@@ -509,7 +547,6 @@ final class ForeignArchive
             throw e;
         }
         started = true;
-        options.evals = o.evals;
         stopped = run.stopped;
         if (pending)
             tell();
@@ -585,7 +622,8 @@ final class ForeignArchive
         checkModel(problem, model, s.model.present, true);
 
         immutable size_t n = problem.dimension, cells = problem.grid.cells, nd = problem.descriptorCount;
-        enforce(cells > 0 && s.options.ranking == problem.ranking, "the saved archive doesn't fit the problem");
+        enforce(cells > 0 && s.options.ranking == problem.ranking && isPopulation(s.options.lambda, true)
+                && isShare(s.options.surrogateShare), "the saved archive doesn't fit the problem");
         foreach (seed; s.seeds)
             enforce(seed.length == n, "the saved archive's seeds don't fit the problem");
         if (s.started)

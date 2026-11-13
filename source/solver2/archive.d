@@ -240,7 +240,7 @@ size_t[] selectDiverse(A, G)(const ref A a, const ref G grid, double within, siz
     if (isGrid!G)
 {
     immutable size_t b = a.best;
-    if (b == size_t.max)
+    if (b == size_t.max || count == 0)
         return null;
     immutable double floor = a.bestScore - within;
     size_t[] pool;
@@ -1440,6 +1440,8 @@ unittest
     a.offer(grid.parse("aa"), 23.9, [0.5], e, 1);       // farthest, but more than 2 below
     assert(selectDiverse(a, grid, 2, 9) == [grid.parse("dd"), grid.parse("da"), grid.parse("dc")]);
     assert(selectDiverse(a, grid, 1, 2) == [grid.parse("dd"), grid.parse("da")]);
+    // At most `count`: the best alone for 1, none for 0.
+    assert(selectDiverse(a, grid, 2, 1) == [grid.parse("dd")] && selectDiverse(a, grid, 2, 0) is null);
 }
 
 unittest
