@@ -1392,6 +1392,36 @@ unittest
     ubyte[64] noise = 0xA7;
     refused(solver2_stage_load(p, m, noise.ptr, noise.length, &s), "");
 
+    // A stage whose best has another number of violations than the problem
+    // has limits: solver2_stage_best would copy them past the caller's
+    // buffer, or leave it short. Written again as it was, the stage loads.
+    {
+        import solver2.bytes : Bytes;
+        static import solver2c.checkpoint;
+        import solver2c.runs : FORMAT, SavedStage, STAGE_MAGIC;
+        auto r = Bytes(stage.dup);
+        solver2c.checkpoint.readHeader(r, STAGE_MAGIC, FORMAT);
+        SavedStage saved;
+        solver2c.checkpoint.read(r, saved);
+        assert(saved.best.feasible && saved.best.eval.violations.length == 3);
+        ubyte[] written(const(double)[] violations)
+        {
+            auto altered = saved;
+            altered.best.eval.violations = violations.dup;
+            Bytes o;
+            solver2c.checkpoint.writeHeader(o, STAGE_MAGIC, FORMAT);
+            solver2c.checkpoint.write(o, altered);
+            return o.data;
+        }
+        const whole = written(saved.best.eval.violations);
+        assert(whole == stage);
+        foreach (violations; [saved.best.eval.violations ~ 1.0, saved.best.eval.violations[0 .. 2], null])
+        {
+            const bytes = written(violations);
+            refused(solver2_stage_load(p, m, bytes.ptr, bytes.length, &s), "the saved stage's best doesn't fit the problem");
+        }
+    }
+
     // The model: the saved run's, made as it was.
     refused(solver2_archive_load(p, null, archive.ptr, archive.length, &a), "the saved run had a model");
     refused(solver2_stage_load(p, null, stage.ptr, stage.length, &s), "the saved run had a model");

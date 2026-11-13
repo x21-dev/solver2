@@ -139,6 +139,73 @@ class AProblem(unittest.TestCase):
         with self.assertRaisesRegex(solver2.Error, "this problem was closed"):
             q.dimension
 
+    def test_one_lifecycle_for_all_that_the_library_holds(self):
+        # A problem, a model, a stage and an archive: each closed says so
+        # when asked, is closed by a `with`, and closes twice.
+        def made():
+            p = Field()
+            model = small_model(p)
+            return [("problem", p, lambda: p.dimension),
+                    ("model", model, lambda: model.rows),
+                    ("stage", solver2.Stage(p, **STAGE), lambda: stage.result),
+                    ("archive", solver2.Archive(p, **ARCHIVE), lambda: archive.result)]
+
+        for how in ("close", "with"):
+            (_, p, _), (_, model, _), (_, stage, _), (_, archive, _) = held = made()
+            for what, thing, ask in reversed(held):         # the problem last: the others are made of it
+                ask()
+                if how == "close":
+                    thing.close()
+                else:
+                    with thing as entered:
+                        self.assertIs(entered, thing)
+                with self.assertRaisesRegex(solver2.Error, "^this %s was closed$" % what):
+                    ask()
+                thing.close()
+
+        # A problem's subclass is still "this problem", and a problem that
+        # was never used is closed by its `with` too.
+        with Field() as unused:
+            pass
+        with self.assertRaisesRegex(solver2.Error, "^this problem was closed$"):
+            unused.cells
+
+    def test_a_fingerprint_is_the_problem_s_own(self):
+        # The default is none, shared by every problem, and can't be
+        # written to; a problem with one assigns its own.
+        class Plain(solver2.Problem):
+            genes = [Gene("x", 0, 1)]
+
+            def evaluate(self, genes, feasible_only):
+                return -np.clip(genes[:, 0], 0, 1), None, None
+
+        self.assertEqual(dict(solver2.Problem.fingerprint), {})
+        with self.assertRaises(TypeError):
+            Plain().fingerprint["version"] = "2"
+        with self.assertRaises(TypeError):
+            solver2.Problem.fingerprint["version"] = "2"
+        self.assertEqual(dict(solver2.Problem.fingerprint), {})
+
+        options = dict(lambda_=4, sigma=0.2, budget=40, seed=1)
+        stage = solver2.Stage(Plain(), **options)
+        stage.run()
+        saved = stage.save()
+        self.assertEqual(solver2.Stage.load(Plain(), saved).save(), saved)
+
+        class Versioned(Plain):
+            fingerprint = {"version": "2"}
+
+        # Its own, and no other problem's: a run saved with it is refused
+        # by a problem without, and loads on one with it. (A run saved
+        # without loads on both: an entry the saved run lacks is new.)
+        versioned = solver2.Stage(Versioned(), **options)
+        versioned.run()
+        with self.assertRaisesRegex(solver2.Error, "of another problem: version: saved 2, now none"):
+            solver2.Stage.load(Plain(), versioned.save())
+        self.assertEqual(solver2.Stage.load(Versioned(), versioned.save()).result.evaluations, 40)
+        self.assertEqual(solver2.Stage.load(Versioned(), saved).result.evaluations, 40)
+        self.assertEqual(dict(Plain.fingerprint), {})
+
     def test_closed_its_runs_go_on_when_they_ask_nothing_of_it(self):
         class Plain(solver2.Problem):
             genes = [Gene("x", 0, 1), Gene("y", 0, 1)]

@@ -41,6 +41,7 @@ whatever else is in its batch.
 import ctypes as C
 import math
 from collections import namedtuple
+from types import MappingProxyType
 
 import numpy as np
 
@@ -122,6 +123,42 @@ def _record(name, struct, flags=()):
     return cls, make
 
 
+class _Held:
+    """Something the library holds a handle for, from when it is made until
+    it is closed: a problem, a model, a stage, an archive. Each names itself
+    (`_what`) and the library's function that lets go of it (`_free`); the
+    handle is `_made`, and is asked for as `_handle`."""
+
+    _what = None
+    _free = None
+
+    @property
+    def _handle(self):
+        handle = self.__dict__.get("_made")
+        if handle is None:
+            raise Error("this %s was closed" % self._what)
+        return handle
+
+    def close(self):
+        """Lets go of it in the library. Closed twice is closed."""
+        handle = self.__dict__.pop("_made", None)
+        self._closed = True
+        if handle is not None:
+            self._free(handle)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exception):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:       # the interpreter is going away
+            pass
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # A problem's description
 # ─────────────────────────────────────────────────────────────────────────────
@@ -159,13 +196,17 @@ def _choice(table, key, what):
         raise ValueError("%s %r is none of %s" % (what, key, ", ".join(table))) from None
 
 
-class Problem:
+class Problem(_Held):
     """A problem to search. Subclass it: give `genes`, and what applies of
     `limits`, `axes` (for the archive), `ranking`, `min_score`,
     `prediction_headroom` and `fingerprint`; and `evaluate`.
 
-    The description is read once, when the problem is first used.
+    The description is read once, when the problem is first used. A
+    problem works in a `with` statement, which closes it.
     """
+
+    _what = "problem"
+    _free = staticmethod(_lib.solver2_problem_free)
 
     #: The searched parameters: `Gene`s.
     genes = ()
@@ -182,9 +223,10 @@ class Problem:
     #: How far over a limit a model's prediction may be before it counts.
     prediction_headroom = 0.0
     #: What a saved run must match to be loaded on this problem: names and
-    #: values of your own (a version, a setting). The description is
-    #: checked as well.
-    fingerprint = {}
+    #: values of your own (a version, a setting), as a dict you assign. The
+    #: description is checked as well. The default, none, can't be written
+    #: to: it is every problem's.
+    fingerprint = MappingProxyType({})
 
     def evaluate(self, genes, feasible_only):
         """Evaluates a batch: `genes` is an array of one row per candidate,
@@ -264,31 +306,21 @@ class Problem:
 
         Its runs hold it in the library and can still be read and saved.
         One gone on with stops, whole, at the Error when its `evaluate`
-        asks the problem for something (`physical`): close the runs first.
+        asks the problem for something (`physical`): close the runs first,
+        and in a `with` statement make the problem the outermost.
         """
-        handle = self.__dict__.pop("_made", None)
-        self._closed = True
-        if handle is not None:
-            _lib.solver2_problem_free(handle)
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:       # the interpreter is going away
-            pass
+        super().close()
 
     # ── The library's side ───────────────────────────────────────────────
 
     @property
     def _handle(self):
-        handle = self.__dict__.get("_made")
-        if handle is None:
-            # Never made again: its runs call the callback of the first
-            # making for as long as they live, and read arrays by its sizes.
-            if self.__dict__.get("_closed"):
-                raise Error("this problem was closed")
-            handle = self._make()
-        return handle
+        # Made when first asked for, and never again once closed: its runs
+        # call the callback of the first making for as long as they live,
+        # and read arrays by its sizes.
+        if "_made" not in self.__dict__ and "_closed" not in self.__dict__:
+            self._make()
+        return _Held._handle.fget(self)
 
     def _make(self):
         genes = [g if isinstance(g, Gene) else Gene(*g) for g in self.genes]
@@ -377,15 +409,6 @@ class Problem:
 # A learned model
 # ─────────────────────────────────────────────────────────────────────────────
 
-class _Held:
-    """Something the library holds a handle for, until it is closed."""
-
-    def __getattr__(self, name):
-        if name == "_made":
-            raise Error("this %s was closed" % type(self).__name__.lower())
-        raise AttributeError(name)
-
-
 class Model(_Held):
     """An ensemble of small networks that learns every evaluation of a run
     and predicts candidates before they are evaluated: it pre-screens a
@@ -395,6 +418,9 @@ class Model(_Held):
     never call `evaluate`, and their number doesn't change the bits.
     Options: members, hidden, batch, learning_rate, l2.
     """
+
+    _what = "model"
+    _free = staticmethod(_lib.solver2_model_free)
 
     def __init__(self, problem, seed, *, threads=0, **options):
         o = _c.ModelOptions()
@@ -409,27 +435,13 @@ class Model(_Held):
     def rows(self):
         """The evaluations it has learned from."""
         n = C.c_size_t()
-        _check(_lib.solver2_model_rows(self._made, C.byref(n)))
+        _check(_lib.solver2_model_rows(self._handle, C.byref(n)))
         return n.value
 
     def close(self):
         """Stops its threads and lets go of it. The runs made with it
         hold it still, and go on without the threads, to the same bits."""
-        handle = self.__dict__.pop("_made", None)
-        if handle is not None:
-            _lib.solver2_model_free(handle)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exception):
-        self.close()
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
+        super().close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -479,14 +491,14 @@ class _Run(_Held):
 
     def _counts(self, function):
         over = (C.c_size_t * max(len(self.problem._limit_names), 1))()
-        _check(function(self._made, over))
+        _check(function(self._handle, over))
         return dict(zip(self.problem._limit_names, over))
 
     def _bytes(self, function):
         size = C.c_size_t()
-        _check(function(self._made, None, 0, C.byref(size)))
+        _check(function(self._handle, None, 0, C.byref(size)))
         buffer = (C.c_ubyte * size.value)()
-        _check(function(self._made, buffer, size.value, C.byref(size)))
+        _check(function(self._handle, buffer, size.value, C.byref(size)))
         return bytes(buffer)
 
     @classmethod
@@ -496,28 +508,10 @@ class _Run(_Held):
         data = bytes(data)
         buffer = (C.c_ubyte * len(data)).from_buffer_copy(data)
         handle = C.c_void_p()
-        _check(function(problem._handle, None if model is None else model._made, buffer, len(data),
+        _check(function(problem._handle, None if model is None else model._handle, buffer, len(data),
                         C.byref(handle)))
         self._made = handle
         return self
-
-    def close(self):
-        """Lets go of the run in the library."""
-        handle = self.__dict__.pop("_made", None)
-        if handle is not None:
-            self._free(handle)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exception):
-        self.close()
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
 
 
 class Stage(_Run):
@@ -532,6 +526,7 @@ class Stage(_Run):
     surrogate_share (from 0 to 1), surrogate_from and surrogate_epochs.
     """
 
+    _what = "stage"
     _free = staticmethod(_lib.solver2_stage_free)
 
     def __init__(self, problem, *, start=None, model=None, **options):
@@ -543,7 +538,7 @@ class Stage(_Run):
         self.problem, self.model = problem, model
         made = C.c_void_p()
         _check(_lib.solver2_stage_new(handle, C.byref(o), None if x0 is None else _pointer(x0),
-                                      None if model is None else model._made, C.byref(made)))
+                                      None if model is None else model._handle, C.byref(made)))
         self._made = made
 
     @classmethod
@@ -571,14 +566,14 @@ class Stage(_Run):
         """
         callback = self._report(report, _c.StageReportFn, _stage_generation)
         r = _c.StageResult()
-        _check(_lib.solver2_stage_run(self._made, budget or 0, callback, None, C.byref(r)), self, self.problem)
+        _check(_lib.solver2_stage_run(self._handle, budget or 0, callback, None, C.byref(r)), self, self.problem)
         return _stage_result(r)
 
     @property
     def result(self):
         """Where the stage stands: a `StageResult`."""
         r = _c.StageResult()
-        _check(_lib.solver2_stage_get(self._made, C.byref(r)))
+        _check(_lib.solver2_stage_get(self._handle, C.byref(r)))
         return _stage_result(r)
 
     @property
@@ -590,7 +585,7 @@ class Stage(_Run):
         p = self.problem
         genes, violations, descriptors = np.empty(p._n), np.empty(p._limits), np.empty(p._nd)
         e = _c.Outcome()
-        _check(_lib.solver2_stage_best(self._made, _pointer(genes), C.byref(e), _pointer(violations),
+        _check(_lib.solver2_stage_best(self._handle, _pointer(genes), C.byref(e), _pointer(violations),
                                        _pointer(descriptors)))
         return Candidate(genes, e.value, e.objective, bool(e.scored), e.hard, e.terminal, e.soft, violations,
                          descriptors)
@@ -622,6 +617,7 @@ class Archive(_Run):
     aim_samples).
     """
 
+    _what = "archive"
     _free = staticmethod(_lib.solver2_archive_free)
 
     def __init__(self, problem, *, seeds=None, model=None, **options):
@@ -641,7 +637,7 @@ class Archive(_Run):
         self.problem, self.model = problem, model
         made = C.c_void_p()
         _check(_lib.solver2_archive_new(handle, C.byref(o), None if rows is None else _pointer(rows),
-                                        0 if rows is None else len(rows), None if model is None else model._made,
+                                        0 if rows is None else len(rows), None if model is None else model._handle,
                                         C.byref(made)))
         self._made = made
 
@@ -671,14 +667,14 @@ class Archive(_Run):
         """
         callback = self._report(report, _c.ArchiveReportFn, _archive_iteration)
         r = _c.ArchiveResult()
-        _check(_lib.solver2_archive_run(self._made, evals or 0, callback, None, C.byref(r)), self, self.problem)
+        _check(_lib.solver2_archive_run(self._handle, evals or 0, callback, None, C.byref(r)), self, self.problem)
         return _archive_result(r)
 
     @property
     def result(self):
         """Where the run stands: an `ArchiveResult`."""
         r = _c.ArchiveResult()
-        _check(_lib.solver2_archive_get(self._made, C.byref(r)))
+        _check(_lib.solver2_archive_get(self._handle, C.byref(r)))
         return _archive_result(r)
 
     def elites(self):
@@ -690,7 +686,7 @@ class Archive(_Run):
         genes, violations, descriptors = (np.empty((cells, k)) for k in (p._n, p._limits, p._nd))
         outcomes = (_c.Outcome * cells)()
         _check(_lib.solver2_archive_elites(
-            self._made, occupied.ctypes.data_as(C.POINTER(C.c_ubyte)), _pointer(value),
+            self._handle, occupied.ctypes.data_as(C.POINTER(C.c_ubyte)), _pointer(value),
             found.ctypes.data_as(C.POINTER(C.c_size_t)), _pointer(genes), outcomes, _pointer(violations),
             _pointer(descriptors)))
         # The structs' layout from their ctypes declaration, padding and
@@ -705,7 +701,7 @@ class Archive(_Run):
     def thresholds(self):
         """Each cell's threshold."""
         t = np.empty(self.problem._cells)
-        _check(_lib.solver2_archive_thresholds(self._made, _pointer(t)))
+        _check(_lib.solver2_archive_thresholds(self._handle, _pointer(t)))
         return t
 
     @property
@@ -719,7 +715,7 @@ class Archive(_Run):
         the best. At most `count`: none for 0."""
         cells = (C.c_size_t * max(count, 1))()
         picked = C.c_size_t()
-        _check(_lib.solver2_archive_diverse(self._made, within, count, cells, C.byref(picked)))
+        _check(_lib.solver2_archive_diverse(self._handle, within, count, cells, C.byref(picked)))
         return list(cells[:picked.value])
 
     def save(self):

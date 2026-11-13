@@ -1739,7 +1739,7 @@ problem is first used.
 | `ranking` | the library's (100, 50, 10) | `Ranking(hard_offset, terminal_offset, bound_penalty)`. Set it when your values reach the offsets: see [Setting the offsets](#setting-the-offsets). |
 | `min_score` | 0 | The value's lower bound, where the archive's thresholds start: at or below the lowest value (the objective less the soft breach) a candidate within the limits can have. |
 | `prediction_headroom` | 0 | How far over a limit a model's prediction may be before it counts as a breach. |
-| `fingerprint` | `{}` | Names and values of your own (a version, a setting) that a saved run must match to be loaded on this problem. The description itself is checked as well. |
+| `fingerprint` | none | Names and values of your own (a version, a setting) that a saved run must match to be loaded on this problem. The description itself is checked as well. Assign a dict of your own: the default can't be written to. |
 
 **`evaluate(self, genes, feasible_only)`** gets a whole batch (a stage's
 population, or every emitter's in an archive iteration): an array with
@@ -1776,7 +1776,9 @@ grid's), `start` (the genes a search starts from when given none),
 anything afterwards, the problem raises a `solver2.Error`. Its runs hold
 it still, and can be read and saved. One gone on with stops, whole, at
 that error when its `evaluate` asks the problem for something, as
-`physical`: so close a problem after its runs.
+`physical`: so close a problem after its runs. A problem works in a
+`with` statement, which closes it, as a model, a stage and an archive
+do: make the problem's the outermost.
 
 Underneath, the problem is a [`DynamicProblem`](#dynamic-problems) on
 the D side, so what that section says of the class route holds here. Its
@@ -1886,7 +1888,7 @@ and the descriptors. Its options are `members`, `hidden`, `batch`,
   learned in one for the next. `model.rows` is the number of evaluations
   it has learned from.
 - `model.close()` stops its threads; a model also works in a `with`
-  statement, as a stage and an archive do. The runs made with a model
+  statement, as a problem, a stage and an archive do. The runs made with a model
   hold it still after it is closed, and go on without its threads, to
   the same bits.
 
@@ -2561,56 +2563,72 @@ The searches:
    under "Values not to pass" in [A CMA-ES stage](#a-cma-es-stage) and
    the archive's [Options](#options). The C interface and Python refuse
    them.
+10. **A compile-time problem's `minScore` is found by its name alone.**
+    `hasMinScore` asks only whether the problem has a member called
+    `minScore`, not whether it reads as a `double`. A member of that name
+    that means something else is taken as where the thresholds start: a
+    number below the real values changes the run's bits without a word,
+    one above them leaves the emitters without an improvement to follow,
+    and one that isn't a number fails the build deep inside
+    `runArchive`. Don't name a member `minScore` unless it is the
+    archive's lower bound (see [What changes](#what-changes)).
 
 The class route:
 
-10. **`checkProblem` can't prove a problem sound.** It catches an
+11. **`checkProblem` can't prove a problem sound.** It catches an
     evaluation that isn't deterministic, or a `minScore` that is too
     high, only on the rows it tries.
-11. **The entry points use `BinnedGrid`, `ArchiveOptions` and `N` 0.** A
+12. **The entry points use `BinnedGrid`, `ArchiveOptions` and `N` 0.** A
     grid or an options type of your own, or an archive held by value,
     means calling the templates over `DynamicProblem` yourself (see
     [The entry points](#the-entry-points)).
 
 Python and the C interface:
 
-12. **The library owns the loop.** You give an `evaluate` and the search
+13. **The library owns the loop.** You give an `evaluate` and the search
     calls it; there is no way to ask for candidates and tell their
     results, as pycma and pyribs offer. It could be added without
     rewriting the searches and isn't planned. To run your own code
     between generations, use the report.
-13. **The Python module is a folder, not a wheel.** Nothing installs it
+14. **The Python module is a folder, not a wheel.** Nothing installs it
     with pip: unpack a release, or build the library, and put the folder
     on Python's path (see [Setting up](#setting-up)). Releases are for
     Linux and Windows on x86-64 only.
-14. **What the interface leaves out of the D route**: the archive's
+15. **What the interface leaves out of the D route**: the archive's
     `evaluated` callback and its per-emitter reports (a report is per
     iteration), [focused runs](#focused-runs), a grid other than
     `BinnedGrid`, a learning spec of the problem's own (a model learns
     the class's defaults), `screenPenalty`, the `noFeasibleSeed` hint,
     and a `Best` carried from one stage to the next (start the next
     stage from the last one's best genes).
-15. **The library can't be started again** in one process after
+16. **The library can't be started again** in one process after
     `solver2_term`. The Python module never ends it.
-16. **Only 64-bit, and only the Pythons CI runs**: the newest, and 3.10
+17. **Only 64-bit, and only the Pythons CI runs**: the newest, and 3.10
     on Linux. The module uses nothing newer than 3.7, but older versions
     aren't tested.
-17. **A saved run's bytes are the library's own format**, not the
+18. **A saved run's bytes are the library's own format**, not the
     checkpoint template's: a run saved from Python doesn't load in a D
     program that uses the template, nor the reverse.
-18. **A model's state is saved after every generation or iteration** of
+19. **A model's state is saved after every generation or iteration** of
     a run from Python or C, so that a failed evaluation can leave the
     run whole. That is most of what the Python example costs over the D one
     (see [What Python costs](#what-python-costs)).
-19. **On Linux the library isn't one file.** It needs LDC's two shared
+20. **Saving a run from Python or C is slower than it needs to be.** The
+    bytes are written one array element at a time, and Python's `save()`
+    asks the library twice (for the size, then the bytes), so a run is
+    serialised twice: about 75 ms for a 1.6 MB guided archive. The
+    checkpoint template in [To a file](#to-a-file) writes arrays the same
+    way. A save every iteration of a long guided run can cost more than
+    the search; save every so many iterations instead.
+21. **On Linux the library isn't one file.** It needs LDC's two shared
     runtime libraries, found in the LDC that built it or beside the
     library (see [Setting up](#setting-up)); a release has them beside
     it. On Windows it is one file.
-20. **A Linux release is tied to its C library.** It needs glibc 2.35 or
+22. **A Linux release is tied to its C library.** It needs glibc 2.35 or
     newer. On a newer glibc than Ubuntu 22.04's it runs, and its results
     may differ in their last bits from the same release on 22.04, as
     runs do between platforms: keep reference results per system.
-21. **solver2 is proprietary.** The repository and its releases are
+23. **solver2 is proprietary.** The repository and its releases are
     public to read and download, and using them needs a licence granted
     individually (`LICENSE.md`).
 
