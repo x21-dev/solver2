@@ -651,9 +651,17 @@ unittest
     ok(solver2_stage_new(p, &o, start.ptr, null, &s));
     refused(solver2_stage_run(s, 0, null, null, null), "gene 1 not finite");
     ok(solver2_stage_free(s));
-    // A model needs surrogate_pool, and is of its problem.
+    // A model needs surrogate_pool, of 2 at least (with 1 nothing is
+    // pre-screened), and is of its problem.
     auto m = smallModel(p);
-    refused(solver2_stage_new(p, &o, null, m, &s), "needs surrogate_pool above 0");
+    foreach (pool; [0, 1])
+    {
+        o.surrogate_pool = pool;
+        refused(solver2_stage_new(p, &o, null, m, &s), "a stage with a model needs surrogate_pool of at least 2");
+    }
+    o.surrogate_pool = 2;
+    ok(solver2_stage_new(p, &o, null, m, &s));
+    ok(solver2_stage_free(s));
     Calls others;
     auto q = field(&others);
     o = stageOptions(true);
@@ -976,6 +984,13 @@ unittest
     o = archiveOptions();
     auto m = smallModel(p);
     refused(solver2_archive_new(p, &o, null, 0, m, &a), "and only then");
+    // With 1 no emitter would be guided: with a model or without.
+    o.surrogate_pool = 1;
+    refused(solver2_archive_new(p, &o, null, 0, m, &a), "surrogate_pool must be 0, or at least 2 with a model");
+    refused(solver2_archive_new(p, &o, null, 0, null, &a), "surrogate_pool must be 0, or at least 2 with a model");
+    o.surrogate_pool = 2;
+    ok(solver2_archive_new(p, &o, null, 0, m, &a));
+    ok(solver2_archive_free(a));
     ok(solver2_model_free(m));
     ok(solver2_problem_free(p));
 }

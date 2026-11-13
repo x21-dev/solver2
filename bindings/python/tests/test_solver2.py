@@ -323,8 +323,9 @@ class AStage(unittest.TestCase):
         for lambda_ in (0, 1):
             with self.assertRaisesRegex(solver2.Error, r"needs a population \(lambda\) of at least 2"):
                 solver2.Stage(p, lambda_=lambda_, sigma=0.2, budget=80)
-        with self.assertRaisesRegex(solver2.Error, "needs surrogate_pool above 0"):
-            solver2.Stage(p, model=small_model(p), **STAGE)
+        for pool in (0, 1):
+            with self.assertRaisesRegex(solver2.Error, "a stage with a model needs surrogate_pool of at least 2"):
+                solver2.Stage(p, model=small_model(p), **dict(STAGE, surrogate_pool=pool))
         for share in (-0.1, 1.5, float("nan")):
             with self.assertRaisesRegex(solver2.Error, "a stage's surrogate_share must be from 0 to 1"):
                 solver2.Stage(p, model=small_model(p), **dict(SCREENED, surrogate_share=share))
@@ -509,6 +510,8 @@ class AnArchive(unittest.TestCase):
             solver2.Archive(p, seeds=[[0.5, 0.5]], **ARCHIVE)
         with self.assertRaisesRegex(solver2.Error, "needs a model when surrogate_pool is above 0"):
             solver2.Archive(p, **GUIDED)
+        with self.assertRaisesRegex(solver2.Error, "surrogate_pool must be 0, or at least 2 with a model"):
+            solver2.Archive(p, model=small_model(p), **dict(GUIDED, surrogate_pool=1))
         with self.assertRaisesRegex(solver2.Error, "infeasibleShare"):
             solver2.Archive(p, rules=dict(infeasible_share=0), **ARCHIVE)
         with self.assertRaisesRegex(solver2.Error, r"needs a population \(lambda\) of at least 2 per emitter"):

@@ -130,6 +130,14 @@ private bool isPopulation(size_t lambda, bool orDefault = false) pure nothrow @n
     return lambda >= 2 || (orDefault && lambda == 0);
 }
 
+/// Whether a run with a model can sample `pool` times what it evaluates:
+/// twice at least. With 1 nothing is ranked on the model, and a stage
+/// would make its CMA-ES anew every generation.
+private bool isPool(size_t pool) pure nothrow @nogc @safe
+{
+    return pool >= 2;
+}
+
 /// Whether `share` is one: from 0 to 1 (a NaN is not). The searches take
 /// that many of a population by it, without asking.
 private bool isShare(double share) pure nothrow @nogc @safe
@@ -183,7 +191,7 @@ final class ForeignStage
         enforce(isPopulation(o.lambda), "a stage needs a population (lambda) of at least 2");
         enforce(isFinite(o.sigma) && o.sigma > 0, "a stage needs a step size (sigma) above 0");
         enforce(o.budget > 0, "a stage needs a budget");
-        enforce(model is null || o.surrogate_pool > 0, "a stage with a model needs surrogate_pool above 0");
+        enforce(model is null || isPool(o.surrogate_pool), "a stage with a model needs surrogate_pool of at least 2");
         enforce(isShare(o.surrogate_share), "a stage's surrogate_share must be from 0 to 1");
         StageOptions so = {lambda: o.lambda, sigma: o.sigma, budget: o.budget, seed: o.seed,
                            stallGenerations: o.stall_generations, stallTolerance: o.stall_tolerance,
@@ -308,7 +316,8 @@ final class ForeignStage
 
         immutable size_t n = problem.dimension;
         enforce(s.start.length == n && s.options.ranking == problem.ranking && isPopulation(s.options.lambda)
-                && isShare(s.options.surrogateShare), "the saved stage doesn't fit the problem");
+                && isShare(s.options.surrogateShare) && (model is null || isPool(s.options.surrogatePool)),
+                "the saved stage doesn't fit the problem");
         enforce(s.run.history.length == s.run.generation, "the saved stage lacks its history");
         if (s.run.generation > 0)
             checkState(s.run.es, n);
@@ -419,6 +428,8 @@ final class ForeignArchive
         enforce(isFinite(o.sigma) && o.sigma > 0 && isFinite(o.explorer_sigma) && o.explorer_sigma > 0,
                 "the archive needs step sizes (sigma, explorer_sigma) above 0");
         enforce(o.alpha >= 0 && o.alpha <= 1, "the archive's alpha must be from 0 to 1");
+        enforce(o.surrogate_pool == 0 || isPool(o.surrogate_pool),
+                "the archive's surrogate_pool must be 0, or at least 2 with a model");
         enforce((model !is null) == (o.surrogate_pool > 0),
                 "an archive needs a model when surrogate_pool is above 0, and only then");
         enforce(isShare(o.surrogate_share), "the archive's surrogate_share must be from 0 to 1");
@@ -623,7 +634,8 @@ final class ForeignArchive
 
         immutable size_t n = problem.dimension, cells = problem.grid.cells, nd = problem.descriptorCount;
         enforce(cells > 0 && s.options.ranking == problem.ranking && isPopulation(s.options.lambda, true)
-                && isShare(s.options.surrogateShare), "the saved archive doesn't fit the problem");
+                && isShare(s.options.surrogateShare) && (model is null || isPool(s.options.surrogatePool)),
+                "the saved archive doesn't fit the problem");
         foreach (seed; s.seeds)
             enforce(seed.length == n, "the saved archive's seeds don't fit the problem");
         if (s.started)

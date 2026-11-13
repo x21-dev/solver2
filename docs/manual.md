@@ -585,7 +585,7 @@ yours to get right, and these go wrong:
 
 `cmaStage` also takes `x0` as it is: a gene that isn't finite reaches the
 problem. `runStage` over a `DynamicProblem` throws on one. The C
-interface and Python refuse every row above but the last (see
+interface and Python refuse every row above (see
 [A stage from Python](#a-stage-from-python)).
 
 **`Best!E`** is the best feasible candidate so far. Start a run with
@@ -862,8 +862,8 @@ right, and these go wrong:
 The template also takes the seeds as they are: a gene that isn't finite
 reaches the problem. `runArchive` over a `DynamicProblem` throws on one.
 More `explorers` than `emitters` is fine: every emitter is then an
-explorer. The C interface and Python refuse every row above but the last
-(see [The archive from Python](#the-archive-from-python)).
+explorer. The C interface and Python refuse every row above (see
+[The archive from Python](#the-archive-from-python)).
 
 ### The archive learning rate (`alpha`)
 
@@ -1795,8 +1795,7 @@ is the problem's. `lambda_`, `sigma` and `budget` have no defaults.
 The interface refuses the values the D route takes as they are (see
 [A CMA-ES stage](#a-cma-es-stage), "Values not to pass"): a `lambda_`
 below 2, a `sigma` that isn't finite and above 0, a `surrogate_share`
-outside 0 to 1. It doesn't refuse a `surrogate_pool` of 1 with a model:
-use 2 or more.
+outside 0 to 1, and a `surrogate_pool` below 2 with a model.
 
 - **`run(budget=None, report=None)`** runs until the budget is spent,
   the stage stalls, or the report stops it, and returns a `StageResult`:
@@ -1834,7 +1833,7 @@ fields in snake case (`rules={"idle_generations": 8}`). The interface
 refuses the values the D route takes as they are (see
 [Options](#options), "Values not to pass"): no emitters, a `lambda_` of
 1, step sizes that aren't finite and above 0, an `alpha` or a
-`surrogate_share` outside 0 to 1.
+`surrogate_share` outside 0 to 1, and a `surrogate_pool` of 1.
 
 - **`run(evals=None, report=None)`** runs until `evals` evaluations
   beyond the seeds are spent, or the report stops it, and returns an
@@ -1873,8 +1872,9 @@ from the genes it learns the value, the hard and the terminal breach,
 and the descriptors. Its options are `members`, `hidden`, `batch`,
 `learning_rate` and `l2`.
 
-- A run with a model needs `surrogate_pool` above 0, and an archive
-  without one must leave it at 0.
+- A run with a model needs a `surrogate_pool` of at least 2 (with 1 it
+  would sample no more than it evaluates, and nothing would be ranked
+  on the model), and an archive without one must leave it at 0.
 - `threads` are worker threads of the model's own, for training and
   predicting. They never call `evaluate`, and their number doesn't
   change the bits.
@@ -2556,7 +2556,7 @@ The searches:
    checks are off, or a run that never returns. The values are listed
    under "Values not to pass" in [A CMA-ES stage](#a-cma-es-stage) and
    the archive's [Options](#options). The C interface and Python refuse
-   them, all but a `surrogate_pool` of 1 with a model.
+   them.
 
 The class route:
 

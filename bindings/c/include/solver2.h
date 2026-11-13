@@ -262,7 +262,7 @@ int solver2_model_rows(solver2_model* model, size_t* rows);
 /* ── A CMA-ES stage ───────────────────────────────────────────────────── */
 
 /* lambda, sigma and budget have no defaults: set them. With a model, set
- * surrogate_pool above 0: from generation surrogate_from on the stage
+ * surrogate_pool to 2 or more: from generation surrogate_from on the stage
  * samples surrogate_pool times lambda and evaluates lambda of them,
  * surrogate_share of those (from 0 to 1) the ones the model ranks best. */
 typedef struct solver2_stage_options
@@ -382,7 +382,7 @@ typedef struct solver2_archive_options
     uint64_t seed;
     size_t explorers;         /* the last emitters head for empty cells */
     double explorer_sigma;
-    size_t surrogate_pool;    /* with a model: above 0 */
+    size_t surrogate_pool;    /* with a model: at least 2; without: 0 */
     double surrogate_share;   /* from 0 to 1 */
     size_t surrogate_from;
     size_t surrogate_epochs;

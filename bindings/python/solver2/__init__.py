@@ -528,7 +528,7 @@ class Stage(_Run):
     initial step size, in gene units) and budget (evaluations) must be
     given; seed; stall_generations and stall_tolerance (stop when the best
     rose by less than the tolerance over that many generations; 0
-    generations: never); with a model, surrogate_pool (above 0),
+    generations: never); with a model, surrogate_pool (at least 2),
     surrogate_share (from 0 to 1), surrogate_from and surrogate_epochs.
     """
 
@@ -614,7 +614,7 @@ class Archive(_Run):
     Options, as keywords: evals (the budget beyond the seeds), emitters,
     lambda_ (per emitter, at least 2; 0: CMA-ES's default), sigma, alpha
     (the archive learning rate), seed, explorers, explorer_sigma; with a
-    model, surrogate_pool (above 0), surrogate_share (from 0 to 1),
+    model, surrogate_pool (at least 2), surrogate_share (from 0 to 1),
     surrogate_from, surrogate_epochs, surrogate_improvers and
     surrogate_aim; rules (a dict
     of idle_generations, infeasible_generations, infeasible_share,
