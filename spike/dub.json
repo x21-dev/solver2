@@ -1,6 +1,6 @@
 {
     "name": "solver2-spike",
-    "description": "Step 1 of docs/work-plan.md: Python calls D. Throwaway.",
+    "description": "The spike that came before the C interface: Python calls D. Throwaway.",
     "dependencies": {
         "solver2": {
             "path": ".."

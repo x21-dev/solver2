@@ -7,12 +7,27 @@ as a class that need not be known at compile time, and a C interface and
 Python module over it. It started as solver's code at commit `ae68dbb`,
 with the package and modules renamed to `solver2`.
 
-**Read `docs/work-plan.md` before starting**: it is the plan and the
-hand-over (design, steps, where the work stands, the questions Dev
-decided). Its steps are all done; keep it true when a decision is made
-or work is added. See README.md for a summary and docs/manual.md for the
-developer manual, which documents all three routes (a compile-time
-problem, the class, Python and C) and the migration from solver.
+See README.md for a summary and docs/manual.md for the developer manual,
+which documents all three routes (a compile-time problem, the class,
+Python and C), the migration from solver, and, under Gaps and caveats,
+what the library doesn't do. The work that built solver2 is finished and
+released (v0.1.0, 2026-11-13); this file and the manual are the
+hand-over.
+
+## Decided by Dev
+
+- The core gets no serialiser: a D project copies the manual's
+  checkpoint template, and the C interface has its own copy
+  (`bindings/c/source/solver2c/checkpoint.d`).
+- The Python module is a folder inside a release archive, not a wheel,
+  until someone needs pip.
+- Python doesn't own the loop (no ask and tell); not planned.
+- Bounds checks are on in the shared library only; the core takes its
+  user's flags.
+- The Python example is held to `docs/example-class`, not to
+  `docs/example`: a problem behind the C interface has the class's
+  learning spec, and the interface isn't shaped around one example.
+- macOS and arm64 are not planned.
 
 ## Working here
 
@@ -46,34 +61,42 @@ problem, the class, Python and C) and the migration from solver.
   in all three.
 - In the binding, a thread unknown to the D runtime is attached once, on
   its first call, and detached by a hook when it ends. Don't attach and
-  detach per call: with this druntime that corrupts memory (the work
-  plan's step 4 says how).
+  detach per call: with this druntime that corrupts memory (the comment
+  above `enter` in `bindings/c/source/solver2c/api.d` says how).
 - The shared library links the D runtime statically on Windows and uses
   LDC's shared runtime on Linux (`bindings/c/dub.json`). Never link it
   statically on Linux: the collector then scans the wrong thread-local
-  storage and crashes about once in 50 runs of the driver (the work
-  plan's step 7 says how it was found). CI checks it with `ldd`.
+  storage and crashes about once in 50 runs of the driver (the manual's
+  "The C interface, for other languages" says why). CI checks it with
+  `ldd`.
 - A crash that shows on Linux only can be hunted on CI: a temporary
-  branch named `debug-...` with a workflow of its own that loops the
-  failing program with core dumps on and prints gdb's backtraces (step
-  7 has the recipe). Ask before pushing it, and delete it afterwards.
+  branch with a workflow of its own (triggered by a push to that
+  branch) that builds with `DFLAGS=-g`, turns core dumps on
+  (`ulimit -c unlimited`, `sudo sysctl -w kernel.core_pattern=<file>`),
+  runs the failing program a few hundred times in several jobs, and on
+  the first failure prints what it printed and
+  `gdb -batch -ex "thread apply all bt" <program> <core>`. Ask before
+  pushing it, and delete it afterwards.
 - The compile-time route must keep solver's bits. The worked example's
   stage prints what solver's at `ae68dbb` prints on one platform; its
   archive's lines differ only because its `minScore` is −50 (with
   `MIN_SCORE` set to 0 in a copy it prints all of solver's lines). Check
-  both when a change touches the searches; the plan's step 0 says how.
-  A deliberate change of bits goes on the plan's list "Changes a
-  migrating project will meet" and into the manual's "Migrating from
-  solver".
+  both when a change touches the searches: export solver
+  (`git -C ../solver archive ae68dbb | tar -x -C <dir>`) and a copy of
+  solver2 (`git archive HEAD | tar -x -C <dir>`, with `MIN_SCORE` 0),
+  run `dub run --compiler=ldc2 --build=release` in both `docs/example`
+  folders, and compare what the programs print (dub's own lines name
+  the package and differ). A deliberate change of bits goes into the
+  manual's "Migrating from solver", under "What changes".
 - solver is frozen by default: a bug in code both hold is fixed here and
-  listed as above, and Dev decides for each whether solver gets the fix,
-  in a session of solver's own.
+  listed there, and Dev decides for each whether solver gets the fix, in
+  a session of solver's own.
 - The manual documents the Python module and the C interface
   ("Interfacing with Python"): a change of `bindings/` that a user can
   see changes that section too, its C program included (it was compiled
   and run by hand, with `ldc2 demo.c solver2.lib`).
 - Commit only when Dev asks, and ask before pushing. The repository is
-  github.com/x21-dev/solver2 (public): a step is a branch and a pull
+  github.com/x21-dev/solver2 (public): a change is a branch and a pull
   request, and merging is Dev's. CI (`.github/workflows/ci.yml`) runs
   every check above on Linux and Windows for each push to `main` and
   each pull request, and once more on Linux on the oldest Python tested.
