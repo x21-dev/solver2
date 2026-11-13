@@ -1618,14 +1618,36 @@ rules of [Determinism](#determinism).
 
 ### Setting up
 
-1. Build the library, with LDC 1.42.0, in `bindings/c`:
+There are two ways to get the module and its library.
+
+**From a release**, with no D compiler. Each
+[release](https://github.com/x21-dev/solver2/releases) has one archive per platform:
+`solver2-<version>-linux-x86_64.tar.gz` and
+`solver2-<version>-windows-x86_64.zip`. An archive holds the module with
+the library and what it needs inside it (`solver2/`), the C header
+(`include/solver2.h`), the worked example (`examples/beam.py`) and a
+`README.md`.
+
+1. Unpack it anywhere.
+2. Put the unpacked folder, the one that holds `solver2/`, on Python's
+   path (`sys.path`, or `PYTHONPATH`) and `import solver2`.
+3. `python examples/beam.py` shows that it works: it ends with a line
+   that starts `bits:`.
+
+A release needs Linux x86-64 with glibc 2.35 or newer (Ubuntu 22.04 or
+newer: the Linux library is built on Ubuntu 22.04) or Windows x86-64,
+and a 64-bit Python 3.10 or newer with numpy.
+
+**From a checkout**, with LDC 1.42.0:
+
+1. Build the library in `bindings/c`:
 
    ```
    dub build --compiler=ldc2 --build=release
    ```
 
-2. Put `bindings/python` on Python's path (`sys.path`, or `PYTHONPATH`)
-   and `import solver2`. It needs numpy and a 64-bit Python.
+2. Put `bindings/python` on Python's path and `import solver2`. It needs
+   numpy and a 64-bit Python.
 
 There is no package to install with pip (see
 [Gaps and caveats](#gaps-and-caveats)). The module looks for
@@ -1648,7 +1670,8 @@ shared runtime libraries, `libdruntime-ldc-shared.so` and
 1.42). It looks for them beside itself and then in the `lib` folder of
 the LDC that built it, so on the machine that built it nothing needs
 doing. To use the library elsewhere, copy the two files from LDC's `lib`
-folder to where `libsolver2.so` is.
+folder to where `libsolver2.so` is. A release's archive has them there
+already.
 
  `solver2.library_path` is the file that was loaded,
 `solver2.abi` the interface version, and `solver2.checked` whether the
@@ -2037,6 +2060,11 @@ that the library on Linux uses the shared runtime.
 Building the library needs LDC and dub only. Its tests
 ([`bindings/c/README.md`](../bindings/c/README.md)) also need a C
 compiler, for ImportC's preprocessor.
+
+**Without building it**: a release's archive (see
+[Setting up](#setting-up)) has the header in `include/` and the library
+in `solver2/`, with its import library `solver2.lib` on Windows and its
+two runtime libraries on Linux.
 
 **What the interface leaves out** of the D route is in
 [Gaps and caveats](#gaps-and-caveats).
@@ -2471,8 +2499,9 @@ Python and the C interface:
     rewriting the searches and isn't planned. To run your own code
     between generations, use the report.
 12. **The Python module is a folder, not a wheel.** Nothing installs it
-    with pip: build the library and put `bindings/python` on Python's
-    path (see [Setting up](#setting-up)).
+    with pip: unpack a release, or build the library, and put the folder
+    on Python's path (see [Setting up](#setting-up)). Releases are for
+    Linux and Windows on x86-64 only.
 13. **What the interface leaves out of the D route**: the archive's
     `evaluated` callback and its per-emitter reports (a report is per
     iteration), [focused runs](#focused-runs), a grid other than
@@ -2494,7 +2523,15 @@ Python and the C interface:
     (see [What Python costs](#what-python-costs)).
 18. **On Linux the library isn't one file.** It needs LDC's two shared
     runtime libraries, found in the LDC that built it or beside the
-    library (see [Setting up](#setting-up)). On Windows it is one file.
+    library (see [Setting up](#setting-up)); a release has them beside
+    it. On Windows it is one file.
+19. **A Linux release is tied to its C library.** It needs glibc 2.35 or
+    newer. On a newer glibc than Ubuntu 22.04's it runs, and its results
+    may differ in their last bits from the same release on 22.04, as
+    runs do between platforms: keep reference results per system.
+20. **solver2 is proprietary.** The repository and its releases are
+    public to read and download, and using them needs a licence granted
+    individually (`LICENSE.md`).
 
 ---
 

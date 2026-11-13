@@ -77,6 +77,21 @@ problem, the class, Python and C) and the migration from solver.
   request, and merging is Dev's. CI (`.github/workflows/ci.yml`) runs
   every check above on Linux and Windows for each push to `main` and
   each pull request, and once more on Linux on the oldest Python tested.
+- Releases: `.github/workflows/release.yml` builds an archive per
+  platform with `release/package.py` (the library, what it needs beside
+  it, the Python module, the header, the example, `release/README.md`
+  and `LICENSE.md`), tests each where there is no LDC with
+  `release/check.py` and the driver, and for a tag `v<version>` makes a
+  **draft** release. It also runs, without the release, on every pull
+  request. Tagging is Dev's word, and publishing the draft is Dev's.
+- The Linux archive is built in an `ubuntu:22.04` container, not on a
+  runner's own system: Ubuntu 22.04 stays supported whatever
+  `ubuntu-latest` becomes. Don't move the build to a newer system
+  without Dev's word, and keep the test on a newer one beside it.
+- solver2 is proprietary, with licences granted individually
+  (`LICENSE.md`, and `"license": "proprietary"` in the dub files). Don't
+  add an open-source licence, and keep `release/README.md` true of what
+  the archive holds and needs.
 - `docs/example/source/checkpoint.d` is printed whole in the manual (To a
   file) as the checkpoint template. Change both together: a
   `static assert` in `docs/example/source/app.d` fails the build when

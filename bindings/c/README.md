@@ -50,6 +50,14 @@ dub build --compiler=ldc2 --build=release --config=unchecked
 
 Both write the same file, so the last one built is the one in place.
 
+## Releases
+
+A [release](https://github.com/x21-dev/solver2/releases) has the library already built, for
+Linux and Windows on x86-64, with the header and, on Linux, the two
+runtime libraries beside it. `release/package.py` makes the archive from
+the library built here, and `.github/workflows/release.yml` builds, tests
+and drafts a release for a tag.
+
 ## Testing
 
 ```

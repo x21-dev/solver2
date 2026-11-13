@@ -54,6 +54,13 @@ elites = archive.elites()
 
 ## Setting up
 
+Without a D compiler, take a
+[release](https://github.com/x21-dev/solver2/releases): unpack the archive for your platform,
+put the unpacked folder on Python's path and `import solver2`. Its
+`README.md` says what it needs.
+
+From this checkout:
+
 1. Build the library, with LDC 1.42.0, in `bindings/c`:
 
    ```
