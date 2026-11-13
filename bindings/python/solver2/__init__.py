@@ -12,7 +12,7 @@ A problem is a class with its description and an ``evaluate``:
         limits = [solver2.Limit("load", "hard"), solver2.Limit("rate_cap", "soft", weight=0.05)]
         axes = [solver2.Axis("width", [3, 5, 7], "nmwW", width=2),
                 solver2.Axis("rate", [1, 10, 40], "slfF", width=10)]
-        min_score = -50
+        min_score = -52            # below the lowest value within the limits: -51
 
         def evaluate(self, genes, feasible_only):
             w, r = self.physical(genes).T
